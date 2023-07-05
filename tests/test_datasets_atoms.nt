@@ -1,0 +1,214 @@
+test_parse_pisces_path:
+  -
+    path: cullpdb_pc25.0_res0.0-1.0_len40-10000_R0.2_Xray_d2023_05_08_chains324
+    expected:
+      max_percent_identity: 25.0
+      min_resolution_A: 0.0
+      max_resolution_A: 1.0
+      min_length: 40
+      max_length: 10000
+      max_r_free: 0.2
+      experiments: Xray
+      year: 2023
+      month: 05
+      day: 08
+      num_chains: 324
+  -
+    path: cullpdb_pc25.0_res0.0-1.0_noBrks_len40-10000_R0.2_Xray_d2023_05_08_chains310
+    expected:
+      max_percent_identity: 25.0
+      min_resolution_A: 0.0
+      max_resolution_A: 1.0
+      no_breaks: noBrks
+      min_length: 40
+      max_length: 10000
+      max_r_free: 0.2
+      experiments: Xray
+      year: 2023
+      month: 05
+      day: 08
+      num_chains: 310
+  -
+    path: cullpdb_pc25.0_res0.0-1.2_len40-10000_R0.2_Xray_d2023_05_08_chains1110
+  -
+    path: cullpdb_pc25.0_res0.0-1.2_noBrks_len40-10000_R0.2_Xray_d2023_05_08_chains1001
+  -
+    path: cullpdb_pc25.0_res0.0-1.5_len40-10000_R0.25_Xray_d2023_05_08_chains3449
+  -
+    path: cullpdb_pc25.0_res0.0-1.5_noBrks_len40-10000_R0.25_Xray_d2023_05_08_chains3005
+  -
+    path: cullpdb_pc25.0_res0.0-1.8_len40-10000_R0.25_Xray_d2023_05_08_chains6417
+  -
+    path: cullpdb_pc25.0_res0.0-1.8_noBrks_len40-10000_R0.25_Xray_d2023_05_08_chains5493
+  -
+    path: cullpdb_pc25.0_res0.0-2.0_len40-10000_R0.25_Xray_d2023_05_08_chains8473
+  -
+    path: cullpdb_pc25.0_res0.0-2.0_noBrks_len40-10000_R0.25_Xray_d2023_05_08_chains7155
+  -
+    path: cullpdb_pc25.0_res0.0-2.2_len40-10000_R0.25_Xray_d2023_05_08_chains9709
+  -
+    path: cullpdb_pc25.0_res0.0-2.2_noBrks_len40-10000_R0.25_Xray_d2023_05_08_chains8111
+  -
+    path: cullpdb_pc25.0_res0.0-2.5_len40-10000_R0.3_Xray_d2023_05_08_chains11150
+  -
+    path: cullpdb_pc25.0_res0.0-2.5_noBrks_len40-10000_R0.3_Xray_d2023_05_08_chains9205
+  -
+    path: cullpdb_pc25.0_res0.0-2.8_len40-10000_R0.3_Xray_d2023_05_08_chains12006
+  -
+    path: cullpdb_pc25.0_res0.0-2.8_noBrks_len40-10000_R0.3_Xray_d2023_05_08_chains9811
+  -
+    path: cullpdb_pc25.0_res0.0-3.0_len40-10000_R0.3_Xray_d2023_05_08_chains12362
+  -
+    path: cullpdb_pc25.0_res0.0-3.0_noBrks_len40-10000_R0.3_Xray_d2023_05_08_chains10104
+  -
+    path: cullpdb_pc25.0_res0.0-4.0_len40-10000_R1.0_Xray+EM_d2023_05_08_chains14851
+  -
+    path: cullpdb_pc25.0_res0.0-4.0_noBrks_len40-10000_R1.0_Xray+EM_d2023_05_08_chains12044
+  -
+    path: cullpdb_pc25.0_res0.0-5.0_len40-10000_R1.0_Xray+Nmr+EM_d2023_05_08_chains15552
+  -
+    path: cullpdb_pc25.0_res0.0-5.0_noBrks_len40-10000_R1.0_Xray+Nmr+EM_d2023_05_08_chains12823
+
+test_load_pisces:
+  -
+    tmp_files:
+      pisces.txt:
+        # $ head cullpdb_pc25.0_res0.0-1.0_len40-10000_R0.2_Xray_d2023_05_08_chains324
+        > PDBchain   len  method   resol   rfac  freerfac
+        > 5D8VA       83  XRAY      0.48  0.072  0.078
+        > 3NIRA       46  XRAY      0.48  0.127  NA
+        > 5NW3A       54  XRAY      0.59  0.135  0.146
+        > 1UCSA       64  XRAY      0.62  0.139  0.155
+        > 3X2MA      180  XRAY      0.64  0.122  0.129
+        > 2VB1A      129  XRAY      0.65  0.084  0.095
+        > 1US0A      316  XRAY      0.66  0.094  0.103
+        > 6E6OA       40  XRAY       0.7  0.166  0.184
+        > 6S2MA      133  XRAY      0.72  0.104  0.111
+    tags:
+      - pisces/5D8VA
+      - pisces/3NIRA
+      - pisces/5NW3A
+      - pisces/1UCSA
+      - pisces/3X2MA
+      - pisces/2VB1A
+      - pisces/1US0A
+      - pisces/6E6OA
+      - pisces/6S2MA
+
+test_atoms_from_mmcif:
+  -
+    tmp_files:
+      atoms.cif:
+        # First residue from 4HHB.
+        > data_4HHB
+        > loop_
+        > _atom_site.group_PDB
+        > _atom_site.id
+        > _atom_site.type_symbol
+        > _atom_site.label_atom_id
+        > _atom_site.label_alt_id
+        > _atom_site.label_comp_id
+        > _atom_site.label_asym_id
+        > _atom_site.label_entity_id
+        > _atom_site.label_seq_id
+        > _atom_site.pdbx_PDB_ins_code
+        > _atom_site.Cartn_x
+        > _atom_site.Cartn_y
+        > _atom_site.Cartn_z
+        > _atom_site.occupancy
+        > _atom_site.B_iso_or_equiv
+        > _atom_site.pdbx_formal_charge
+        > _atom_site.auth_seq_id
+        > _atom_site.auth_comp_id
+        > _atom_site.auth_asym_id
+        > _atom_site.auth_atom_id
+        > _atom_site.pdbx_PDB_model_num
+        > ATOM   1    N  N   . VAL A 1 1   ? 6.204   16.869  4.854   1.00 49.05 ? 1   VAL A N   1
+        > ATOM   2    C  CA  . VAL A 1 1   ? 6.913   17.759  4.607   1.00 43.14 ? 1   VAL A CA  1
+        > ATOM   3    C  C   . VAL A 1 1   ? 8.504   17.378  4.797   1.00 24.80 ? 1   VAL A C   1
+        > ATOM   4    O  O   . VAL A 1 1   ? 8.805   17.011  5.943   1.00 37.68 ? 1   VAL A O   1
+        > ATOM   5    C  CB  . VAL A 1 1   ? 6.369   19.044  5.810   1.00 72.12 ? 1   VAL A CB  1
+        > ATOM   6    C  CG1 . VAL A 1 1   ? 7.009   20.127  5.418   1.00 61.79 ? 1   VAL A CG1 1
+        > ATOM   7    C  CG2 . VAL A 1 1   ? 5.246   18.533  5.681   1.00 80.12 ? 1   VAL A CG2 1
+        > #
+    expected:
+      > N  6.204  16.869  4.854
+      > C  6.913  17.759  4.607
+      > C  8.504  17.378  4.797
+      > O  8.805  17.011  5.943
+      > C  6.369  19.044  5.810
+      > C  7.009  20.127  5.418
+      > C  5.246  18.533  5.681
+  -
+    tmp_files:
+      atoms.cif:
+        # First residue from 5D8V, as downloaded from PDB-REDO.  PDB-REDO puts 
+        # the "atom site" columns in a different order than the PDB, and this 
+        # turns out to break the ProDy parser.  So I had to use the more-robust 
+        # PDBeCIF parser instead.
+
+        # This file also happens to contain interesting occupancy information, 
+        # although at the moment, I'm not using it.
+
+        > data_5D8V
+        > loop_
+        > _atom_site.id 
+        > _atom_site.auth_asym_id 
+        > _atom_site.label_alt_id 
+        > _atom_site.label_asym_id 
+        > _atom_site.label_atom_id 
+        > _atom_site.label_comp_id 
+        > _atom_site.label_entity_id 
+        > _atom_site.label_seq_id 
+        > _atom_site.type_symbol 
+        > _atom_site.group_PDB 
+        > _atom_site.pdbx_PDB_ins_code 
+        > _atom_site.Cartn_x 
+        > _atom_site.Cartn_y 
+        > _atom_site.Cartn_z 
+        > _atom_site.occupancy 
+        > _atom_site.B_iso_or_equiv 
+        > _atom_site.pdbx_formal_charge 
+        > _atom_site.auth_seq_id 
+        > _atom_site.auth_comp_id 
+        > _atom_site.auth_atom_id 
+        > _atom_site.pdbx_PDB_model_num 
+        > 1    A A A N   ALA 1 1  N  ATOM   ? 30.656 34.300 2.078   0.61 2.91 ? 1   ALA N   1 
+        > 2    A B A N   ALA 1 1  N  ATOM   ? 31.401 34.407 2.460   0.39 2.95 ? 1   ALA N   1 
+        > 3    A A A CA  ALA 1 1  C  ATOM   ? 31.360 34.028 3.351   0.61 2.72 ? 1   ALA CA  1 
+        > 4    A B A CA  ALA 1 1  C  ATOM   ? 31.942 34.296 3.806   0.39 2.91 ? 1   ALA CA  1 
+        > 5    A A A CB  ALA 1 1  C  ATOM   ? 32.054 35.302 3.915   0.61 2.80 ? 1   ALA CB  1 
+        > 6    A B A CB  ALA 1 1  C  ATOM   ? 32.382 35.614 4.481   0.39 3.00 ? 1   ALA CB  1 
+        > 7    A A A C   ALA 1 1  C  ATOM   ? 30.358 33.504 4.354   0.61 2.62 ? 1   ALA C   1 
+        > 8    A B A C   ALA 1 1  C  ATOM   ? 30.832 33.725 4.665   0.39 2.80 ? 1   ALA C   1 
+        > 9    A A A O   ALA 1 1  O  ATOM   ? 29.229 33.975 4.440   0.61 2.66 ? 1   ALA O   1 
+        > 10   A B A O   ALA 1 1  O  ATOM   ? 29.767 34.299 4.702   0.39 3.00 ? 1   ALA O   1 
+    expected:
+      > N  30.656  34.300  2.078  0.61
+      > N  31.401  34.407  2.460  0.39
+      > C  31.360  34.028  3.351  0.61
+      > C  31.942  34.296  3.806  0.39
+      > C  32.054  35.302  3.915  0.61
+      > C  32.382  35.614  4.481  0.39
+      > C  30.358  33.504  4.354  0.61
+      > C  30.832  33.725  4.665  0.39
+      > O  29.229  33.975  4.440  0.61
+      > O  29.767  34.299  4.702  0.39
+
+
+test_transform_atom_coords:
+  -
+    # I'm only testing a single atom (and a very simple transformation) because 
+    # I just want to test that the mechanics of doing the transformation work.  
+    # The transformation itself is implemented in the `coords.py` module, and 
+    # is tested extensively elsewhere.
+    frame_xy:
+      origin: 1 1 1
+      rot_vec_rad: 0 0 0
+    atoms_x:
+      > C 1 1 1
+    expected_y:
+      > C 0 0 0
+
+
+
