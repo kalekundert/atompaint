@@ -1,0 +1,118 @@
+test_equivariance:
+  -
+    id: icosahedral
+    network:
+      > ap.IcosahedralTransformationPredictor(
+      >         conv_channels=[1, 1, 1, 1],
+      >         conv_field_of_view=3,
+      >         pool_field_of_view=2,
+      >         mlp_channels=[1],
+      > )
+    input_size: 22
+  -
+    id: fourier
+    network:
+      > ap.FourierTransformationPredictor(
+      >         frequencies=1,
+      >         conv_channels=[1, 1, 1, 1],
+      >         conv_field_of_view=3,
+      >         conv_stride=2,
+      >         mlp_channels=[1],
+      > )
+    input_size: 15
+
+
+test_coord_frame_loss:
+  -
+    id: identity
+    ref: identity
+    query: identity
+    loss: 0
+  -
+    id: translate-x
+    ref: identity
+    query:
+      origin: 1 0 0
+    loss: 1
+  -
+    id: translate-y
+    ref: identity
+    query:
+      origin: 0 1 0
+    loss: 1
+  -
+    id: translate-z
+    ref: identity
+    query:
+      origin: 0 0 1
+    loss: 1
+  -
+    id: translate-xyz
+    ref: identity
+    query:
+      origin: 1 1 1
+    loss: 3
+  -
+    id: translate-xyz-radius-2
+    ref: identity
+    query:
+      origin: 1 1 1
+    radius: 2
+    loss: 3
+  -
+    id: rotate-x
+    ref: identity
+    query:
+      axis: 1 0 0
+      degrees_ccw: 30
+
+    # A 30° rotation creates an isoceles triangle with sides the length of the 
+    # radius, which is 1 in this case.  We can calulate the length of the base 
+    # using the law of cosines:
+    #
+    # L = sqrt(1² + 1² - 2 cos(30°)) = 0.5176380902050414
+    #
+    # The handles on the Y and Z axes move by this amount, while the handle on 
+    # the X axis doesn't move.  So the mean squared distance is:
+    #
+    # ℓ = (L² + L² + 0) / 3 = 0.17863279495408171
+    loss: 0.17863279495408171
+  -
+    id: rotate-y
+    ref: identity
+    query:
+      axis: 0 1 0
+      degrees_ccw: 30
+    loss: 0.17863279495408171
+  -
+    id: rotate-z
+    ref: identity
+    query:
+      axis: 0 0 1
+      degrees_ccw: 30
+    loss: 0.17863279495408171
+  -
+    id: rotate-xyz
+    ref: identity
+    query:
+      # This will permute all three axes.
+      axis: 1 1 1
+      degrees_ccw: 120
+    loss: 2
+  -
+    id: rotate-xyz-radius-0.5
+    ref: identity
+    query:
+      axis: 1 1 1
+      degrees_ccw: 120
+    radius: 0.5
+    loss: 0.5
+  -
+    id: rotate-xyz-radius-2
+    ref: identity
+    query:
+      axis: 1 1 1
+      degrees_ccw: 120
+    radius: 2
+    loss: 8
+
