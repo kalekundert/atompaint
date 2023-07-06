@@ -60,6 +60,7 @@ from pathlib import Path
 from more_itertools import nth, chunked
 from dataclasses import asdict
 from functools import partial
+from math import ceil
 from tqdm import tqdm
 
 def main():
@@ -99,7 +100,8 @@ def main():
             print(f"Worker id ({worker_id}) must be less than number of workers ({num_workers})")
 
         tags, origin_params = load_origin_params(output_path)
-        chunk = nth(chunked(tags, num_workers), worker_id)
+        num_tags_per_worker = int(ceil(len(tags) / num_workers))
+        chunk = nth(chunked(tags, num_tags_per_worker), worker_id)
 
         origins, status = choose_origins_for_tags(tqdm(chunk), origin_params)
         save_origins(output_path, origins, status, (worker_id, num_workers))
