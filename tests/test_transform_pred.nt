@@ -22,7 +22,7 @@ test_equivariance:
     input_size: 15
 
 
-test_coord_frame_loss:
+test_coord_frame_mse_loss:
   -
     id: identity
     ref: identity
