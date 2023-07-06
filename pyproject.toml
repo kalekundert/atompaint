@@ -16,6 +16,7 @@ classifiers = [
 dependencies = [
   'docopt',
   'escnn',
+  'lie-learn @ git+https://github.com/AMLab-Amsterdam/lie_learn@07469085ac0fd4550fd26ff61cb10bb1e92cead1',
   'lightning',
   'more_itertools',
   'nestedtext',
