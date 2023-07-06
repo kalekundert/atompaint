@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pandera as pa
-import nestedtext as nt
+import json
 
 from atompaint.datasets.atoms import (
         get_atom_coords, transform_atom_coords, atoms_from_tag,
@@ -10,9 +10,9 @@ from atompaint.datasets.coords import make_coord_frame, invert_coord_frame
 from atompaint.datasets.voxelize import _get_max_element_radius
 from scipy.spatial import KDTree
 from torch.utils.data import IterableDataset
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from functools import cached_property, partial
-from multiprocessing import Pool
+from shutil import rmtree
 from math import pi, sqrt
 
 from pandera.typing import DataFrame, Series
@@ -159,33 +159,26 @@ Origins: TypeAlias = DataFrame[OriginsSchema]
 
 # Pre-calculate origins
 
-def choose_origins(
-        tags,
-        origin_params,
-        *,
-        progress_bar=lambda x: x,
-        meta=None,
-):
-    worker = partial(_choose_origins_worker, origin_params)
+def choose_origins_for_tags(tags, origin_params):
+    dfs = []
+    status = {
+            'tags_skipped': [],
+            'tags_loaded': [],
+    }
 
-    with Pool() as pool:
-        results = list(progress_bar(pool.imap(worker, tags)))
+    for tag in tags:
+        try:
+            atoms = atoms_from_tag(tag)
+        except FileNotFoundError:
+            status['tags_skipped'].append(tag)
+            continue
 
-    if meta is not None:
-        meta['tags_skipped'] = [x[1] for x in results if x[0] == 'skip']
-        meta['tags_loaded'] = [x[1] for x in results if x[0] == 'load']
+        df = choose_origins_for_atoms(tag, atoms, origin_params)
+        dfs.append(df)
 
-    dfs = [x[2] for x in results if x[0] == 'load']
-    return pd.concat(dfs, ignore_index=True)
+        status['tags_loaded'].append(tag)
 
-def _choose_origins_worker(origin_params, tag):
-    try:
-        atoms = atoms_from_tag(tag)
-    except FileNotFoundError:
-        return 'skip', tag
-
-    df = choose_origins_for_atoms(tag, atoms, origin_params)
-    return 'load', tag, df
+    return pd.concat(dfs, ignore_index=True), status
 
 def choose_origins_for_atoms(tag, atoms, origin_params):
     df = atoms[['x', 'y', 'z']].copy()
@@ -194,12 +187,69 @@ def choose_origins_for_atoms(tag, atoms, origin_params):
     return df[n >= origin_params.min_neighbors]
 
 def load_origins(path):
-    return pd.read_parquet(path / 'origins.parquet')
+    dfs = [
+            pd.read_parquet(p)
+            for p in sorted(path.glob('origins.parquet*'))
+    ]
+    return pd.concat(dfs, ignore_index=True)
 
-def save_origins(path, df, params):
+def load_origin_params(path):
+    with open(path / 'params.json') as f:
+        params = json.load(f)
+
+    tags = params.pop('tags')
+    origin_params = OriginParams(**params)
+
+    return tags, origin_params
+
+def save_origins(path, df, status, suffix=None):
+    if suffix:
+        worker_id, num_workers = suffix
+        suffix = f'.{worker_id:0{len(str(num_workers - 1))}}'
+    else:
+        suffix = ''
+
+    df.to_parquet(path / f'origins.parquet{suffix}')
+    
+    with open(path / f'status.json{suffix}', 'w') as f:
+        json.dump(status, f)
+
+def save_origin_params(path, tags, origin_params, force=False):
+    if path.exists():
+        if force or not any(path.glob('origins.parquet*')):
+            rmtree(path)
+        else:
+            raise FileExistsError(path)
+
     path.mkdir()
-    nt.dump(params, path / 'params.nt')
-    df.to_parquet(path / 'origins.parquet')
+
+    params = {
+            'tags': list(tags),
+            **asdict(origin_params),
+    }
+    with open(path / 'params.json', 'w') as f:
+        json.dump(params, f)
+
+def consolidate_origins(path, dry_run=False):
+    df = load_origins(path)
+    status = {'tags_skipped': [], 'tags_loaded': []}
+
+    for p in path.glob('status.json*'):
+        with open(p) as f:
+            status_i = json.load(f)
+
+        status['tags_loaded'] += status_i['tags_loaded']
+        status['tags_skipped'] += status_i['tags_skipped']
+
+    if not dry_run:
+        save_origins(path, df, status)
+
+        for p in path.glob('origins.parquet.*'):
+            p.unlink()
+        for p in path.glob('status.json.*'):
+            p.unlink()
+
+    return df, status
 
 def count_neighbors(atoms, radius_A):
     xyz = get_atom_coords(atoms)
@@ -208,7 +258,7 @@ def count_neighbors(atoms, radius_A):
 
     # This will count an atom as being a "neighbor" to other conformers of 
     # itself, which isn't strictly correct, but I think the error will be small 
-    # enough (and hard enough to fix) that I'm willing to just overlook it.
+    # enough (and awkward enough to fix) that I'm willing to just overlook it.
 
     for i,j in kd_tree.query_pairs(radius_A):
         weights[i] += atoms.iloc[j]['occupancy']
