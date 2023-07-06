@@ -65,7 +65,7 @@ def main():
     origins_path = Path(args['--output-path'].format(**all_params))
 
     if origins_path.exists():
-        if args['--force']:
+        if args['--force'] or not (origins_path / 'origins.parquet').exists():
             rmtree(origins_path)
         else:
             print(f"Output path already exists: {origins_path}")
@@ -74,7 +74,7 @@ def main():
 
     pisces_df = load_pisces(pisces_path)
     origins = choose_origins(
-            pisces_df['tag'][:100],
+            pisces_df['tag'],
             origin_params,
             progress_bar=partial(tqdm, total=len(pisces_df)),
             meta=(meta := {}),

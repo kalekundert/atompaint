@@ -172,8 +172,8 @@ def choose_origins(
         results = list(progress_bar(pool.imap(worker, tags)))
 
     if meta is not None:
-        meta['tags_skipped'] = sum(x[0] == 'skip' for x in results)
-        meta['tags_loaded'] = sum(x[0] == 'load' for x in results)
+        meta['tags_skipped'] = [x[1] for x in results if x[0] == 'skip']
+        meta['tags_loaded'] = [x[1] for x in results if x[0] == 'load']
 
     dfs = [x[2] for x in results if x[0] == 'load']
     return pd.concat(dfs, ignore_index=True)
