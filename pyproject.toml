@@ -24,7 +24,6 @@ dependencies = [
   'pandas',
   'pandera',
   'pdbecif',
-  'pytorch3d',
   'scipy',
   'torch',
   'tqdm',

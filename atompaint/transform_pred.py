@@ -3,10 +3,10 @@ import torch
 from escnn.nn import *
 from escnn.group import Group, Representation, SO3
 from escnn.gspaces import no_base_space
-from pytorch3d.transforms import rotation_6d_to_matrix, matrix_to_rotation_6d
 from itertools import pairwise
 from more_itertools import unique_everseen as unique
 
+from .vendored.pytorch3d import rotation_6d_to_matrix
 from .downsample import EquivariantCnn, IcosahedralCnn, FourierCnn
 from .type_hints import LayerFactory
 
