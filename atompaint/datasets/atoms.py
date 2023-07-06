@@ -59,7 +59,7 @@ def atoms_from_tag(tag: str) -> Atoms:
     form, id = tag.split('/')
 
     if form == 'pisces':
-        id, chain = id[:4], id[-1]
+        id, chain = id[:4], id[4:]
         path = get_pdb_redo_path(id)
         return atoms_from_mmcif(path, chain=chain)
     else:
