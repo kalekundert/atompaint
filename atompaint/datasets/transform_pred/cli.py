@@ -110,3 +110,10 @@ def main():
 
         print(f"Loaded {len(status['tags_loaded'])} structures.")
         print(f"Skipped {len(status['tags_skipped'])} structures.")
+
+        tags, _ = load_origin_params(output_path)
+        tags_missing = set(tags) - set(status['tags_loaded'] + status['tags_skipped'])
+
+        print(f"Missing {len(tags_missing)} structures.")
+
+
