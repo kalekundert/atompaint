@@ -56,7 +56,7 @@ test_view_pair:
       > C  1  0  0
       > C  0  0  1
 
-test_count_neighbors:
+test_count_nearby_atoms:
   -
     id: 1d-0.99
     atoms:
@@ -65,7 +65,7 @@ test_count_neighbors:
       > C 0 0 2
     radius_A: 0.99
     expected:
-      > 0 0 0
+      > 1 1 1
   -
     id: 1d-1.01
     atoms:
@@ -74,7 +74,7 @@ test_count_neighbors:
       > C 0 0 2
     radius_A: 1.01
     expected:
-      > 1 2 1
+      > 2 3 2
   -
     id: 3d-0.99
     atoms:
@@ -107,9 +107,9 @@ test_count_neighbors:
       > C  1  1  1
     radius_A: 0.99
     expected:
-      > 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+      > 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   -
-    id: 3d-0.99
+    id: 3d-1.01
     atoms:
       > C -1 -1 -1
       > C -1 -1  0
@@ -140,72 +140,88 @@ test_count_neighbors:
       > C  1  1  1
     radius_A: 1.01
     expected:
-      > 3 4 3 4 5 4 3 4 3 4 5 4 5 6 5 4 5 4 3 4 3 4 5 4 3 4 3
+      > 4 5 4 5 6 5 4 5 4 5 6 5 6 7 6 5 6 5 4 5 4 5 6 5 4 5 4
   -
     id: occupancy
     atoms:
+      > e x y z q
       > C 0 0 0 0.4
       > C 0 0 1 0.6
       > C 0 0 2 1.0
     radius_A: 1.01
     expected:
-      > 0.6 1.4 0.6
+      > 1.0 2.0 1.6
 
 test_choose_origins_for_atoms:
   -
     id: 1d
     tag: 9xyz
     atoms:
-      > C 0 0 0
-      > C 0 0 1
-      > C 0 0 2
+      > resn x y z
+      > ALA  0 0 0
+      > ALA  0 0 1
+      > ALA  0 0 2
     origin_params:
       radius_A: 1.01
-      min_neighbors: 2
+      min_nearby_atoms: 3
     expected:
-      > 9xyz 0 0 1 2
+      > 9xyz 0 0 1 1
   -
     id: 3d
     tag: 9xyz
     atoms:
-      > C -1 -1 -1
-      > C -1 -1  0
-      > C -1 -1  1
-      > C -1  0 -1
-      > C -1  0  0
-      > C -1  0  1
-      > C -1  1 -1
-      > C -1  1  0
-      > C -1  1  1
-      > C  0 -1 -1
-      > C  0 -1  0
-      > C  0 -1  1
-      > C  0  0 -1
-      > C  0  0  0
-      > C  0  0  1
-      > C  0  1 -1
-      > C  0  1  0
-      > C  0  1  1
-      > C  1 -1 -1
-      > C  1 -1  0
-      > C  1 -1  1
-      > C  1  0 -1
-      > C  1  0  0
-      > C  1  0  1
-      > C  1  1 -1
-      > C  1  1  0
-      > C  1  1  1
+      > resn  x  y  z
+      > ALA  -1 -1 -1
+      > ALA  -1 -1  0
+      > ALA  -1 -1  1
+      > ALA  -1  0 -1
+      > ALA  -1  0  0
+      > ALA  -1  0  1
+      > ALA  -1  1 -1
+      > ALA  -1  1  0
+      > ALA  -1  1  1
+      > ALA   0 -1 -1
+      > ALA   0 -1  0
+      > ALA   0 -1  1
+      > ALA   0  0 -1
+      > ALA   0  0  0
+      > ALA   0  0  1
+      > ALA   0  1 -1
+      > ALA   0  1  0
+      > ALA   0  1  1
+      > ALA   1 -1 -1
+      > ALA   1 -1  0
+      > ALA   1 -1  1
+      > ALA   1  0 -1
+      > ALA   1  0  0
+      > ALA   1  0  1
+      > ALA   1  1 -1
+      > ALA   1  1  0
+      > ALA   1  1  1
     origin_params:
       radius_A: 1.01
-      min_neighbors: 5
+      min_nearby_atoms: 6
     expected:
-      > 9xyz -1  0  0  5
-      > 9xyz  0 -1  0  5
-      > 9xyz  0  0 -1  5
-      > 9xyz  0  0  0  6
-      > 9xyz  0  0  1  5
-      > 9xyz  0  1  0  5
-      > 9xyz  1  0  0  5
-
+      > 9xyz -1  0  0  1
+      > 9xyz  0 -1  0  1
+      > 9xyz  0  0 -1  1
+      > 9xyz  0  0  0  1
+      > 9xyz  0  0  1  1
+      > 9xyz  0  1  0  1
+      > 9xyz  1  0  0  1
+  -
+    id: nonbiological
+    tag: 9xyz
+    atoms:
+      > resn x y z
+      > HOH  0 0 0
+      > ALA  0 0 1
+      > ALA  0 0 2
+      > ALA  0 0 3
+    origin_params:
+      radius_A: 1.01
+      min_nearby_atoms: 3
+    expected:
+      > 9xyz 0 0 2 1
 
 

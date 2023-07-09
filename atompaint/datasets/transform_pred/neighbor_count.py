@@ -5,6 +5,7 @@ import json
 
 from atompaint.datasets.atoms import (
         get_atom_coords, transform_atom_coords, atoms_from_tag,
+        filter_nonbiological_atoms,
 )
 from atompaint.datasets.coords import make_coord_frame, invert_coord_frame
 from atompaint.datasets.voxelize import _get_max_element_radius
@@ -12,6 +13,7 @@ from scipy.spatial import KDTree
 from torch.utils.data import IterableDataset
 from dataclasses import dataclass, asdict
 from functools import cached_property, partial
+from pathlib import Path
 from shutil import rmtree
 from math import pi, sqrt
 
@@ -89,11 +91,12 @@ class NeighborCountDataStreamForCnn(NeighborCountDataStream):
             origin_db,
             batch_size,
             img_params,
-            max_dist,
+            max_dist_A,
     ):
+        min_dist_A = calc_min_distance_between_origins(img_params)
         view_pair_params = ViewPairParams(
-                min_dist=calc_min_distance_between_origins(img_params),
-                max_dist=max_dist,
+                min_dist_A=min_dist_A,
+                max_dist_A=min_dist_A + max_dist_A,
         )
         input_from_atoms = partial(image_from_atoms, img_params=img_params)
 
@@ -146,7 +149,7 @@ class ViewPairParams:
 @dataclass
 class OriginParams:
     radius_A: float
-    min_neighbors: int
+    min_nearby_atoms: int
 
 class OriginsSchema(pa.DataFrameModel):
     tag: Series[str]
@@ -181,19 +184,25 @@ def choose_origins_for_tags(tags, origin_params):
     return pd.concat(dfs, ignore_index=True), status
 
 def choose_origins_for_atoms(tag, atoms, origin_params):
+    atoms = filter_nonbiological_atoms(atoms)
+
+    # Count atoms after filtering out the nonbiological ones, so that we only 
+    # get origins centered on and mostly surrounded by biological atoms.
+    n = count_nearby_atoms(atoms, origin_params.radius_A)
+
     df = atoms[['x', 'y', 'z']].copy()
     df['tag'] = tag
-    df['weight'] = n = count_neighbors(atoms, origin_params.radius_A)
-    return df[n >= origin_params.min_neighbors]
+    df['weight'] = 1
+    return df[n >= origin_params.min_nearby_atoms]
 
-def load_origins(path):
+def load_origins(path: Path):
     dfs = [
             pd.read_parquet(p)
             for p in sorted(path.glob('origins.parquet*'))
     ]
     return pd.concat(dfs, ignore_index=True)
 
-def load_origin_params(path):
+def load_origin_params(path: Path):
     with open(path / 'params.json') as f:
         params = json.load(f)
 
@@ -202,7 +211,7 @@ def load_origin_params(path):
 
     return tags, origin_params
 
-def save_origins(path, df, status, suffix=None):
+def save_origins(path: Path, df, status, suffix=None):
     if suffix:
         worker_id, num_workers = suffix
         suffix = f'.{worker_id:0{len(str(num_workers - 1))}}'
@@ -214,7 +223,7 @@ def save_origins(path, df, status, suffix=None):
     with open(path / f'status.json{suffix}', 'w') as f:
         json.dump(status, f)
 
-def save_origin_params(path, tags, origin_params, force=False):
+def save_origin_params(path: Path, tags, origin_params, force=False):
     if path.exists():
         if force or not any(path.glob('origins.parquet*')):
             rmtree(path)
@@ -230,7 +239,7 @@ def save_origin_params(path, tags, origin_params, force=False):
     with open(path / 'params.json', 'w') as f:
         json.dump(params, f)
 
-def consolidate_origins(path, dry_run=False):
+def consolidate_origins(path: Path, dry_run: bool=False):
     df = load_origins(path)
     status = {'tags_skipped': [], 'tags_loaded': []}
 
@@ -251,20 +260,21 @@ def consolidate_origins(path, dry_run=False):
 
     return df, status
 
-def count_neighbors(atoms, radius_A):
+def count_nearby_atoms(atoms, radius_A):
+    """
+    Calculate the number of atoms within the given radius of each given atom.
+
+    The counts will include the atom itself, and will account for occupancy.
+    """
     xyz = get_atom_coords(atoms)
     kd_tree = KDTree(xyz)
-    weights = np.zeros(kd_tree.n)
-
-    # This will count an atom as being a "neighbor" to other conformers of 
-    # itself, which isn't strictly correct, but I think the error will be small 
-    # enough (and awkward enough to fix) that I'm willing to just overlook it.
+    counts = atoms['occupancy'].copy()
 
     for i,j in kd_tree.query_pairs(radius_A):
-        weights[i] += atoms.iloc[j]['occupancy']
-        weights[j] += atoms.iloc[i]['occupancy']
+        counts.iloc[i] += atoms.iloc[j]['occupancy']
+        counts.iloc[j] += atoms.iloc[i]['occupancy']
 
-    return pd.Series(weights, index=atoms.index)
+    return counts
 
 # Make view pairs
 

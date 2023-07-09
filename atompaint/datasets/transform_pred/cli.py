@@ -3,7 +3,7 @@ Precalculate a set of origins to use for training transformation prediction
 models.
 
 Usage:
-    ap_choose_origins init <pisces_path> [-o <path>] [-f] [-n <neighbors>]
+    ap_choose_origins init <pisces_path> [-o <path>] [-f] [-n <atoms>]
         [-r <radius>]
     ap_choose_origins calc <output_dir> [<num_workers> <worker_id>]
     ap_choose_origins finish <output_dir> [-d]
@@ -18,36 +18,37 @@ Arguments:
         contains the input parameters and any output data frames.
 
 Options:
-    -o --output-path <path>     [default: origins_max_identity_{max_percent_identity}_max_resolution_{max_resolution_A}_min_neighbors_{min_neighbors}_radius_{radius_A}]
+    -o --output-path <path>     [default: %]
+        The name of the directory to write the chosen origins to.  '%' will be 
+        replaced by a long string containing a number of details about how the 
+        origins were selected, including sequence identity, resolution, nearby 
+        atom thresholds, etc.
 
     -f --force
         If the output path already exists, overwrite it.  Otherwise, the 
         program will abort.
         
-    -n --min-neighbors <int>    [default: 10]
-        How many atoms must be in the vicinity of an atom (defined by the 
-        radius below) in order for that atom to be considered as an origin.  
-        The default is calculated by counting the number of atoms necessary to 
-        fill half the space in question, assuming that each atom has a radius 
-        of 0.7 Å.  Note that the most dense sphere packing fills 3/4 of the 
-        available space, and that the empirical radii of C, N, and O are 
-        between 0.6 and 0.7Å.  For the default radius of 3Å, this works out to 
-        40 atoms.
-
-        https://en.wikipedia.org/wiki/Sphere_packing
-        https://en.wikipedia.org/wiki/Atomic_radii_of_the_elements
+    -n --min-nearby-atoms <int>    [default: 25]
+        How many atoms must be in the vicinity of a point in order for that 
+        point to be considered as an origin.  Note that only "biological" atoms 
+        are included in this count; atoms belonging to common crystallographic 
+        contaminants like water, glycerol, etc. are excluded.  The default is 
+        appropriate for a 5Å radius, and was empirically chosen to get origins 
+        that are mostly surrounded by biological atoms.  See also `--radius`.
 
     -r --radius <angstroms>     [default: 5]
-        The area in which to count neighboring atoms, in units of Angstroms.  
-        See above for more detail.
+        The radius, in units of Angstroms, of the sphere around each potential 
+        atoms in which to count atoms.  See also `--min-nearby-atoms`.
 
     -d --dry-run
-        Show status information, but don't actually write the consolidated 
-        files or delete the unconsolidated ones.
+        Show status information about any completed/pending jobs, but don't 
+        actually write the consolidated files or delete the unconsolidated 
+        ones.
 
 Environment variables:
     PDB_DIR
-        The path to the location of the actual PDB files...
+        The path a directory containing every necessary structure, in the MMCIF 
+        format.  
 """
 
 import docopt
@@ -71,13 +72,23 @@ def main():
         pisces_df = load_pisces(pisces_path)
         origin_params = OriginParams(
                 radius_A=float(args['--radius']),
-                min_neighbors=int(args['--min-neighbors']),
+                min_nearby_atoms=int(args['--min-nearby-atoms']),
         )
         path_params = {
                 **parse_pisces_path(pisces_path),
                 **asdict(origin_params),
         }
-        output_path = Path(args['--output-path'].format(**path_params))
+        default_output_path = (
+                'origins_max_identity_{max_percent_identity}_'
+                'max_resolution_{max_resolution_A}_'
+                'min_nearby_atoms_{min_nearby_atoms}_'
+                'radius_{radius_A}'
+        )
+        output_path = Path(
+                args['--output-path']
+                    .replace('%', default_output_path)
+                    .format(**path_params)
+        )
 
         try:
             save_origin_params(
@@ -116,6 +127,6 @@ def main():
         tags, _ = load_origin_params(output_path)
         tags_missing = set(tags) - set(status['tags_loaded'] + status['tags_skipped'])
 
-        print(f"Missing {len(tags_missing)} structures.")
+        print(f"Pending {len(tags_missing)} structures.")
 
 

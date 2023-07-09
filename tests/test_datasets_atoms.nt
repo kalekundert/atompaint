@@ -1,3 +1,29 @@
+test_load_pisces:
+  -
+    tmp_files:
+      pisces.txt:
+        # $ head cullpdb_pc25.0_res0.0-1.0_len40-10000_R0.2_Xray_d2023_05_08_chains324
+        > PDBchain   len  method   resol   rfac  freerfac
+        > 5D8VA       83  XRAY      0.48  0.072  0.078
+        > 3NIRA       46  XRAY      0.48  0.127  NA
+        > 5NW3A       54  XRAY      0.59  0.135  0.146
+        > 1UCSA       64  XRAY      0.62  0.139  0.155
+        > 3X2MA      180  XRAY      0.64  0.122  0.129
+        > 2VB1A      129  XRAY      0.65  0.084  0.095
+        > 1US0A      316  XRAY      0.66  0.094  0.103
+        > 6E6OA       40  XRAY       0.7  0.166  0.184
+        > 6S2MA      133  XRAY      0.72  0.104  0.111
+    tags:
+      - pisces/5D8VA
+      - pisces/3NIRA
+      - pisces/5NW3A
+      - pisces/1UCSA
+      - pisces/3X2MA
+      - pisces/2VB1A
+      - pisces/1US0A
+      - pisces/6E6OA
+      - pisces/6S2MA
+
 test_parse_pisces_path:
   -
     path: cullpdb_pc25.0_res0.0-1.0_len40-10000_R0.2_Xray_d2023_05_08_chains324
@@ -69,34 +95,68 @@ test_parse_pisces_path:
   -
     path: cullpdb_pc25.0_res0.0-5.0_noBrks_len40-10000_R1.0_Xray+Nmr+EM_d2023_05_08_chains12823
 
-test_load_pisces:
+test_filter_nonbiological_atoms:
   -
-    tmp_files:
-      pisces.txt:
-        # $ head cullpdb_pc25.0_res0.0-1.0_len40-10000_R0.2_Xray_d2023_05_08_chains324
-        > PDBchain   len  method   resol   rfac  freerfac
-        > 5D8VA       83  XRAY      0.48  0.072  0.078
-        > 3NIRA       46  XRAY      0.48  0.127  NA
-        > 5NW3A       54  XRAY      0.59  0.135  0.146
-        > 1UCSA       64  XRAY      0.62  0.139  0.155
-        > 3X2MA      180  XRAY      0.64  0.122  0.129
-        > 2VB1A      129  XRAY      0.65  0.084  0.095
-        > 1US0A      316  XRAY      0.66  0.094  0.103
-        > 6E6OA       40  XRAY       0.7  0.166  0.184
-        > 6S2MA      133  XRAY      0.72  0.104  0.111
-    tags:
-      - pisces/5D8VA
-      - pisces/3NIRA
-      - pisces/5NW3A
-      - pisces/1UCSA
-      - pisces/3X2MA
-      - pisces/2VB1A
-      - pisces/1US0A
-      - pisces/6E6OA
-      - pisces/6S2MA
+    atoms:
+      # Monomers present in 5d8v
+      >  i resn  x  y  z
+      >  0  ALA  0  0  0
+      >  1  ARG  0  0  1
+      >  2  ASN  0  0  2
+      >  3  ASP  0  0  3
+      >  4  CYS  0  0  4
+      >  5  GLN  0  0  5
+      >  6  GLU  0  0  6
+      >  7  GLY  0  0  7
+      >  8  GOL  0  0  8
+      >  9  HIS  0  0  9
+      > 10  HOH  0  0 10
+      > 11  ILE  0  0 11
+      > 12  LEU  0  0 12
+      > 13  LYS  0  0 13
+      > 14  MET  0  0 14
+      > 15  PHE  0  0 15
+      > 16  PRO  0  0 16
+      > 17  SER  0  0 17
+      > 18  SF4  0  0 18
+      > 19  SO4  0  0 19
+      > 20  THR  0  0 20
+      > 21  TRP  0  0 21
+      > 22  TYR  0  0 22
+      > 23  VAL  0  0 23
+
+    expected:
+      # Removed glycerol (GOL), water (HOH), and sulfate (SO4).  The 
+      # iron-sulfur cluster (SF4) is also removed.  This is because the 
+      # blacklist is meant to help the PDB show quality metrics for 
+      # "interesting" ligands, and iron-sulfur clusters are apparently not 
+      # interesting enough.  I'd rather they were included, but broadly 
+      # speaking the blacklist still does what I want it to.
+      >  i resn  x  y  z
+      >  0  ALA  0  0  0
+      >  1  ARG  0  0  1
+      >  2  ASN  0  0  2
+      >  3  ASP  0  0  3
+      >  4  CYS  0  0  4
+      >  5  GLN  0  0  5
+      >  6  GLU  0  0  6
+      >  7  GLY  0  0  7
+      >  9  HIS  0  0  9
+      > 11  ILE  0  0 11
+      > 12  LEU  0  0 12
+      > 13  LYS  0  0 13
+      > 14  MET  0  0 14
+      > 15  PHE  0  0 15
+      > 16  PRO  0  0 16
+      > 17  SER  0  0 17
+      > 20  THR  0  0 20
+      > 21  TRP  0  0 21
+      > 22  TYR  0  0 22
+      > 23  VAL  0  0 23
 
 test_atoms_from_mmcif:
   -
+    id: 4HHB
     tmp_files:
       atoms.cif:
         # First residue from 4HHB.
@@ -132,25 +192,74 @@ test_atoms_from_mmcif:
         > ATOM   7    C  CG2 . VAL A 1 1   ? 5.246   18.533  5.681   1.00 80.12 ? 1   VAL A CG2 1
         > #
     expected:
-      > N  6.204  16.869  4.854
-      > C  6.913  17.759  4.607
-      > C  8.504  17.378  4.797
-      > O  8.805  17.011  5.943
-      > C  6.369  19.044  5.810
-      > C  7.009  20.127  5.418
-      > C  5.246  18.533  5.681
+      > resn e      x       y      z     q
+      > VAL  N  6.204  16.869  4.854  1.00
+      > VAL  C  6.913  17.759  4.607  1.00
+      > VAL  C  8.504  17.378  4.797  1.00
+      > VAL  O  8.805  17.011  5.943  1.00
+      > VAL  C  6.369  19.044  5.810  1.00
+      > VAL  C  7.009  20.127  5.418  1.00
+      > VAL  C  5.246  18.533  5.681  1.00
   -
+    id: 5D8V
     tmp_files:
       atoms.cif:
         # First residue from 5D8V, as downloaded from PDB-REDO.  PDB-REDO puts 
         # the "atom site" columns in a different order than the PDB, and this 
         # turns out to break the ProDy parser.  So I had to use the more-robust 
-        # PDBeCIF parser instead.
-
-        # This file also happens to contain interesting occupancy information, 
-        # although at the moment, I'm not using it.
+        # PDBeCIF parser instead.  5D8V also happens to contain some actual 
+        # occupancy information.
 
         > data_5D8V
+        > loop_
+        > _atom_site.id
+        > _atom_site.auth_asym_id
+        > _atom_site.label_alt_id
+        > _atom_site.label_asym_id
+        > _atom_site.label_atom_id
+        > _atom_site.label_comp_id
+        > _atom_site.label_entity_id
+        > _atom_site.label_seq_id
+        > _atom_site.type_symbol
+        > _atom_site.group_PDB
+        > _atom_site.pdbx_PDB_ins_code
+        > _atom_site.Cartn_x
+        > _atom_site.Cartn_y
+        > _atom_site.Cartn_z
+        > _atom_site.occupancy
+        > _atom_site.B_iso_or_equiv
+        > _atom_site.pdbx_formal_charge
+        > _atom_site.auth_seq_id
+        > _atom_site.auth_comp_id
+        > _atom_site.auth_atom_id
+        > _atom_site.pdbx_PDB_model_num
+        > 1    A A A N   ALA 1 1  N  ATOM   ? 30.656 34.300 2.078   0.61 2.91 ? 1   ALA N   1
+        > 2    A B A N   ALA 1 1  N  ATOM   ? 31.401 34.407 2.460   0.39 2.95 ? 1   ALA N   1
+        > 3    A A A CA  ALA 1 1  C  ATOM   ? 31.360 34.028 3.351   0.61 2.72 ? 1   ALA CA  1
+        > 4    A B A CA  ALA 1 1  C  ATOM   ? 31.942 34.296 3.806   0.39 2.91 ? 1   ALA CA  1
+        > 5    A A A CB  ALA 1 1  C  ATOM   ? 32.054 35.302 3.915   0.61 2.80 ? 1   ALA CB  1
+        > 6    A B A CB  ALA 1 1  C  ATOM   ? 32.382 35.614 4.481   0.39 3.00 ? 1   ALA CB  1
+        > 7    A A A C   ALA 1 1  C  ATOM   ? 30.358 33.504 4.354   0.61 2.62 ? 1   ALA C   1
+        > 8    A B A C   ALA 1 1  C  ATOM   ? 30.832 33.725 4.665   0.39 2.80 ? 1   ALA C   1
+        > 9    A A A O   ALA 1 1  O  ATOM   ? 29.229 33.975 4.440   0.61 2.66 ? 1   ALA O   1
+        > 10   A B A O   ALA 1 1  O  ATOM   ? 29.767 34.299 4.702   0.39 3.00 ? 1   ALA O   1
+    expected:
+      > resn e       x       y      z     q
+      > ALA  N  30.656  34.300  2.078  0.61
+      > ALA  N  31.401  34.407  2.460  0.39
+      > ALA  C  31.360  34.028  3.351  0.61
+      > ALA  C  31.942  34.296  3.806  0.39
+      > ALA  C  32.054  35.302  3.915  0.61
+      > ALA  C  32.382  35.614  4.481  0.39
+      > ALA  C  30.358  33.504  4.354  0.61
+      > ALA  C  30.832  33.725  4.665  0.39
+      > ALA  O  29.229  33.975  4.440  0.61
+      > ALA  O  29.767  34.299  4.702  0.39
+  -
+    id: 6Q00-B
+    tmp_files:
+      atoms.cif:
+        > data_6Q00
         > loop_
         > _atom_site.id 
         > _atom_site.auth_asym_id 
@@ -173,35 +282,44 @@ test_atoms_from_mmcif:
         > _atom_site.auth_comp_id 
         > _atom_site.auth_atom_id 
         > _atom_site.pdbx_PDB_model_num 
-        > 1    A A A N   ALA 1 1  N  ATOM   ? 30.656 34.300 2.078   0.61 2.91 ? 1   ALA N   1 
-        > 2    A B A N   ALA 1 1  N  ATOM   ? 31.401 34.407 2.460   0.39 2.95 ? 1   ALA N   1 
-        > 3    A A A CA  ALA 1 1  C  ATOM   ? 31.360 34.028 3.351   0.61 2.72 ? 1   ALA CA  1 
-        > 4    A B A CA  ALA 1 1  C  ATOM   ? 31.942 34.296 3.806   0.39 2.91 ? 1   ALA CA  1 
-        > 5    A A A CB  ALA 1 1  C  ATOM   ? 32.054 35.302 3.915   0.61 2.80 ? 1   ALA CB  1 
-        > 6    A B A CB  ALA 1 1  C  ATOM   ? 32.382 35.614 4.481   0.39 3.00 ? 1   ALA CB  1 
-        > 7    A A A C   ALA 1 1  C  ATOM   ? 30.358 33.504 4.354   0.61 2.62 ? 1   ALA C   1 
-        > 8    A B A C   ALA 1 1  C  ATOM   ? 30.832 33.725 4.665   0.39 2.80 ? 1   ALA C   1 
-        > 9    A A A O   ALA 1 1  O  ATOM   ? 29.229 33.975 4.440   0.61 2.66 ? 1   ALA O   1 
-        > 10   A B A O   ALA 1 1  O  ATOM   ? 29.767 34.299 4.702   0.39 3.00 ? 1   ALA O   1 
+        > 1    A A A N   MET 1 1  N ATOM   ? 3.653   10.577 -8.947  0.66 12.78 ? 1   MET N   1 
+        > 2    A B A N   MET 1 1  N ATOM   ? 3.314   10.750 -8.528  0.34 16.26 ? 1   MET N   1 
+        > 3    A A A CA  MET 1 1  C ATOM   ? 4.234   11.591 -9.843  0.66 12.19 ? 1   MET CA  1 
+        > 4    A B A CA  MET 1 1  C ATOM   ? 3.722   11.497 -9.739  0.34 18.36 ? 1   MET CA  1 
+        > 5    A A A CB  MET 1 1  C ATOM   ? 3.307   11.821 -11.019 0.66 12.12 ? 1   MET CB  1 
+        > 6    A B A CB  MET 1 1  C ATOM   ? 2.607   11.523 -10.791 0.34 20.87 ? 1   MET CB  1 
+        > 7    A A A CG  MET 1 1  C ATOM   ? 2.039   12.621 -10.745 0.66 11.67 ? 1   MET CG  1 
+        > 8    A B A CG  MET 1 1  C ATOM   ? 1.543   12.598 -10.629 0.34 23.34 ? 1   MET CG  1 
+        > 9    A A A SD  MET 1 1  S ATOM   ? 0.925   12.514 -12.139 0.66 12.26 ? 1   MET SD  1 
+        > 10   A B A SD  MET 1 1  S ATOM   ? 0.469   12.756 -12.080 0.34 25.72 ? 1   MET SD  1 
+        > 11   A A A CE  MET 1 1  C ATOM   ? -0.357  13.663 -11.627 0.66 12.21 ? 1   MET CE  1 
+        > 12   A B A CE  MET 1 1  C ATOM   ? -0.791  13.868 -11.460 0.34 22.15 ? 1   MET CE  1 
+        > 13   A A A C   MET 1 1  C ATOM   ? 4.437   12.882 -9.098  0.66 11.53 ? 1   MET C   1 
+        > 14   A B A C   MET 1 1  C ATOM   ? 4.016   12.875 -9.218  0.34 16.74 ? 1   MET C   1 
+        > 15   A A A O   MET 1 1  O ATOM   ? 3.812   13.141 -8.064  0.66 12.53 ? 1   MET O   1 
+        > 16   A B A O   MET 1 1  O ATOM   ? 3.412   13.295 -8.244  0.34 18.34 ? 1   MET O   1 
+        > 834  B . B N   SER 2 1  N ATOM   ? 3.818   51.729 -16.252 1.00 17.62 ? 22  SER N   1 
+        > 835  B . B CA  SER 2 1  C ATOM   ? 5.077   51.380 -15.550 1.00 16.03 ? 22  SER CA  1 
+        > 836  B . B CB  SER 2 1  C ATOM   ? 4.941   51.545 -14.041 1.00 16.87 ? 22  SER CB  1 
+        > 837  B . B OG  SER 2 1  O ATOM   ? 3.988   50.626 -13.521 1.00 13.99 ? 22  SER OG  1 
+        > 838  B . B C   SER 2 1  C ATOM   ? 5.434   49.943 -15.901 1.00 15.74 ? 22  SER C   1 
+        > 839  B . B O   SER 2 1  O ATOM   ? 4.560   49.145 -16.217 1.00 15.05 ? 22  SER O   1 
+    chain: B
     expected:
-      > N  30.656  34.300  2.078  0.61
-      > N  31.401  34.407  2.460  0.39
-      > C  31.360  34.028  3.351  0.61
-      > C  31.942  34.296  3.806  0.39
-      > C  32.054  35.302  3.915  0.61
-      > C  32.382  35.614  4.481  0.39
-      > C  30.358  33.504  4.354  0.61
-      > C  30.832  33.725  4.665  0.39
-      > O  29.229  33.975  4.440  0.61
-      > O  29.767  34.299  4.702  0.39
-
+      > resn e      x       y        z     q
+      > SER  N  3.818  51.729  -16.252  1.00
+      > SER  C  5.077  51.380  -15.550  1.00
+      > SER  C  4.941  51.545  -14.041  1.00
+      > SER  O  3.988  50.626  -13.521  1.00
+      > SER  C  5.434  49.943  -15.901  1.00
+      > SER  O  4.560  49.145  -16.217  1.00
 
 test_transform_atom_coords:
   -
     # I'm only testing a single atom (and a very simple transformation) because 
     # I just want to test that the mechanics of doing the transformation work.  
     # The transformation itself is implemented in the `coords.py` module, and 
-    # is tested extensively elsewhere.
+    # is tested extensively in that context.
     frame_xy:
       origin: 1 1 1
       rot_vec_rad: 0 0 0

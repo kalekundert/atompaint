@@ -36,9 +36,8 @@ def origins(params):
 def origin_params(params):
     return apd.OriginParams(
             radius_A=float(params['radius_A']),
-            min_neighbors=int(params['min_neighbors']),
+            min_nearby_atoms=int(params['min_nearby_atoms']),
     )
-
 
 def test_origin_coord():
     rows = [
@@ -251,9 +250,9 @@ def test_view_pair(atoms_i, frame_ia, frame_ib, atoms_a, atoms_b):
 @pff.parametrize(
         schema=pff.cast(atoms=atoms, radius_A=float, expected=matrix),
 )
-def test_count_neighbors(atoms, radius_A, expected):
-    neighbors = apd.count_neighbors(atoms, radius_A)
-    np.testing.assert_array_equal(neighbors.values, expected)
+def test_count_nearby_atoms(atoms, radius_A, expected):
+    counts = apd.count_nearby_atoms(atoms, radius_A)
+    np.testing.assert_array_equal(counts.values, expected)
 
 @pff.parametrize(
         schema=pff.cast(
