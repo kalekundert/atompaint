@@ -6,7 +6,6 @@ from pymol import cmd
 from pymol.cgo import *
 from itertools import product
 from collections import Counter, defaultdict
-from pprint import pprint
 
 from atompaint.datasets import voxelize, transform_pred
 from atompaint.datasets.atoms import atoms_from_pymol
@@ -58,10 +57,9 @@ def ap_view_pair(
         resolution_A=1,
         channels='C,N,O',
         element_radii_A=None,
-        min_neighbors=10,
-        neighbor_radius_A=5,
-        min_dist_A=10,
-        max_dist_A=15,
+        min_nearby_atoms=25,
+        nearby_radius_A=5,
+        max_dist_A=5,
         random_seed=0,
         state=-1,
 ):
@@ -71,20 +69,15 @@ def ap_view_pair(
     channels = parse_channels(channels)
     channel_colors = pick_channel_colors(sele, channels)
     element_radii_A = parse_element_radii_A(element_radii_A, resolution_A)
-    min_neighbors = int(min_neighbors)
-    neighbor_radius_A = float(neighbor_radius_A)
-    min_dist_A = float(min_dist_A)
+    min_nearby_atoms = int(min_nearby_atoms)
+    nearby_radius_A = float(nearby_radius_A)
     max_dist_A = float(max_dist_A)
     rng = np.random.default_rng(int(random_seed))
     state = int(state)
 
     origin_params = transform_pred.OriginParams(
-            min_neighbors=min_neighbors,
-            radius_A=neighbor_radius_A,
-    )
-    view_pair_params = transform_pred.ViewPairParams(
-            min_dist_A=min_dist_A,
-            max_dist_A=max_dist_A,
+            min_nearby_atoms=min_nearby_atoms,
+            radius_A=nearby_radius_A,
     )
     img_params = voxelize.ImageParams(
             grid=voxelize.Grid(
@@ -94,6 +87,11 @@ def ap_view_pair(
             channels=channels,
             element_radii_A=element_radii_A,
     )
+    min_dist_A = transform_pred.calc_min_distance_between_origins(img_params)
+    view_pair_params = transform_pred.ViewPairParams(
+            min_dist_A=min_dist_A,
+            max_dist_A=min_dist_A + max_dist_A,
+    )
 
     origins = transform_pred.choose_origins_for_atoms(sele, atoms, origin_params)
     origin_a, _ = transform_pred.sample_origin(rng, origins)
@@ -101,10 +99,6 @@ def ap_view_pair(
     view_pair = transform_pred.sample_view_pair(
             rng, atoms, origin_a, origins, view_pair_params)
 
-    np.set_printoptions(precision=3)
-    print(
-            view_pair.frame_ai,
-    )
     render_view(
             dict(
                 voxels='view_a',
@@ -133,20 +127,20 @@ cmd.auto_arg[0]['ap_view_pair'] = cmd.auto_arg[0]['zoom']
 
 def ap_origin_weights(
         sele='all',
-        min_neighbors=10,
-        neighbor_radius_A=5,
+        min_nearby_atoms=10,
+        nearby_radius_A=5,
         random_seed=0,
         palette='blue_yellow',
         state=-1,
 ):
     atoms = atoms_from_pymol(sele, state)
-    min_neighbors = int(min_neighbors)
-    neighbor_radius_A = float(neighbor_radius_A)
+    min_nearby_atoms = int(min_nearby_atoms)
+    nearby_radius_A = float(nearby_radius_A)
     state = int(state)
 
     origin_params = transform_pred.OriginParams(
-            min_neighbors=min_neighbors,
-            radius_A=neighbor_radius_A,
+            min_nearby_atoms=min_nearby_atoms,
+            radius_A=nearby_radius_A,
     )
     origins = transform_pred.choose_origins_for_atoms(sele, atoms, origin_params)
 
@@ -172,6 +166,7 @@ def render_view(
         frame_xi=None,
         state=-1,
 ):
+    view = cmd.get_view()
     img = voxelize.image_from_atoms(atoms_x, img_params)
     voxels = cgo_voxels(img, img_params.grid, channel_colors)
 
@@ -194,6 +189,8 @@ def render_view(
         for obj in obj_names.values():
             frame_1d = list(frame_xi.flat)
             cmd.set_object_ttt(obj, frame_1d, state)
+
+    cmd.set_view(view)
 
 def parse_channels(channels_str):
     return channels_str.split(',') + ['.*']

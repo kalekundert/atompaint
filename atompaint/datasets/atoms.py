@@ -6,18 +6,20 @@ with the following columns: element, x, y, z.
 import numpy as np
 import pandas as pd
 import pandera as pa
+import importlib.resources
 import re
 import os
 
 from .coords import transform_coords, homogenize_coords
 from more_itertools import one
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path
 
 from typing import TypeAlias, Optional
 from pandera.typing import DataFrame, Series
 
 class AtomSchema(pa.DataFrameModel):
+    monomer: Series[str]
     element: Series[str]
     x: Series[float]
     y: Series[float]
@@ -55,11 +57,42 @@ def parse_pisces_path(path):
         return {}
 
 
+@cache
+def load_nonbiological_ligands():
+    vendor_dir = importlib.resources.files('atompaint.vendored')
+    tsv_path = vendor_dir / 'PDB_ligand_quality_composite_score' / 'non-LOI-blocklist.tsv'
+
+    return pd.read_csv(
+            tsv_path,
+            sep='\t',
+            # Can't find column definitions, so I'm just guessing for some of 
+            # these (some are self-evident).
+            names=['id', 'n', 'het', 'mw', 'formula', 'role', 'notes'],
+    )
+
+def filter_nonbiological_atoms(atoms):
+    # I'm just checking that the 3-letter ID string matches.  Ideally, I'd also 
+    # check that the molecular formula matches, because I'm pretty sure that 
+    # these 3-letter IDs aren't guaranteed to be unique between structures.  
+    # This information is in the CIF files, but providing this information 
+    # would require `atoms` to become a more complicated, opaque object (as 
+    # opposed to just a data frame with some standard columns).
+    blacklist = load_nonbiological_ligands()
+    hits = atoms['monomer'].isin(blacklist['id'])
+    return atoms[~hits]
+
+
 def atoms_from_tag(tag: str) -> Atoms:
     form, id = tag.split('/')
 
     if form == 'pisces':
-        id, chain = id[:4], id[4:]
+        # A number of the PISCES entries have three-letter chains, e.g. AAA or 
+        # BBB.  When I look at the actual structures, they just have the normal 
+        # chain A or B.  So for that reason, I made the decision to only take 
+        # the first letter of the chain and ignore anything later.  I can 
+        # imagine that this would be wrong in some cases, but I think it'll be 
+        # right more often that not.
+        id, chain = id[:4], id[4]
         path = get_pdb_redo_path(id)
         return atoms_from_mmcif(path, chain=chain)
     else:
@@ -75,19 +108,22 @@ def atoms_from_mmcif(path: Path, chain: Optional[str]=None) -> Atoms:
     cif = one(cifs.values())
 
     # Might make more sense to just pick the highest occupancy conformation to 
-    # train on, but occupancy is more true to the underlying data.  We don't 
-    # necessarily know which partial occupancy conformations go together.
+    # train on, but including each atom in proportion to its occupancy is more 
+    # true to the underlying data.  We don't necessarily know which partial 
+    # occupancy conformations go together.
     df = pd.DataFrame({
-            'chain': cif['_atom_site']['label_asym_id'],
-            'element': cif['_atom_site']['type_symbol'],
-            'x': map(float, cif['_atom_site']['Cartn_x']),
-            'y': map(float, cif['_atom_site']['Cartn_y']),
-            'z': map(float, cif['_atom_site']['Cartn_z']),
-            'occupancy': map(float, cif['_atom_site']['occupancy']),
+        'chain': cif['_atom_site']['label_asym_id'],
+        'monomer': cif['_atom_site']['label_comp_id'],
+        'element': cif['_atom_site']['type_symbol'],
+        'x': map(float, cif['_atom_site']['Cartn_x']),
+        'y': map(float, cif['_atom_site']['Cartn_y']),
+        'z': map(float, cif['_atom_site']['Cartn_z']),
+        'occupancy': map(float, cif['_atom_site']['occupancy']),
     })
 
     if chain is not None:
         df = df[df['chain'] == chain]
+        df = df.reset_index(drop=True)
 
     del df['chain']
 
@@ -99,11 +135,11 @@ def atoms_from_pymol(sele: str, state=-1) -> Atoms:
     rows = []
     cmd.iterate_state(
             state, sele,
-            'rows.append((elem, x, y, z, q))',
+            'rows.append((resn, elem, x, y, z, q))',
             space={'rows': rows},
     )
 
-    return pd.DataFrame(rows, columns=['element', 'x', 'y', 'z', 'occupancy'])
+    return pd.DataFrame(rows, columns=['monomer', 'element', 'x', 'y', 'z', 'occupancy'])
 
 def get_pdb_redo_path(id: str) -> Path:
     id = id.lower()
