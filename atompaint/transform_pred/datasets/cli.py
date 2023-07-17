@@ -56,7 +56,7 @@ from .neighbor_count import (
         OriginParams, choose_origins_for_tags, save_origins,
         save_origin_params, load_origin_params, consolidate_origins,
 )
-from ..atoms import load_pisces, parse_pisces_path
+from atompaint.datasets.atoms import load_pisces, parse_pisces_path
 from pathlib import Path
 from more_itertools import nth, chunked
 from dataclasses import asdict

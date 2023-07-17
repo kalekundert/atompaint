@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 def flatten_base_space(geom_tensor):
     # I'd like to add this as a method of the `GeometricTensor` class.
     tensor = geom_tensor.tensor
@@ -17,3 +19,9 @@ def flatten_base_space(geom_tensor):
             tensor.reshape(new_shape),
             new_type,
     )
+
+def get_scalar(scalar_or_seq, i):
+    if isinstance(scalar_or_seq, Sequence):
+        return scalar_or_seq[i]
+    else:
+        return scalar_or_seq

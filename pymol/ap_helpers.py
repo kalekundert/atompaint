@@ -7,7 +7,8 @@ from pymol.cgo import *
 from itertools import product
 from collections import Counter, defaultdict
 
-from atompaint.datasets import voxelize, transform_pred
+from atompaint.transform_pred import datasets as transform_pred
+from atompaint.datasets import voxelize
 from atompaint.datasets.atoms import atoms_from_pymol
 from atompaint.datasets.coords import invert_coord_frame
 
@@ -55,11 +56,12 @@ def ap_view_pair(
         sele='all',
         length_voxels=10,
         resolution_A=1,
+        origin_a=None,
         channels='C,N,O',
         element_radii_A=None,
         min_nearby_atoms=25,
         nearby_radius_A=5,
-        max_dist_A=5,
+        max_dist_A=2,
         random_seed=0,
         state=-1,
 ):
@@ -94,7 +96,11 @@ def ap_view_pair(
     )
 
     origins = transform_pred.choose_origins_for_atoms(sele, atoms, origin_params)
-    origin_a, _ = transform_pred.sample_origin(rng, origins)
+
+    if origin_a is None:
+        origin_a, _ = transform_pred.sample_origin(rng, origins)
+    else:
+        origin_a = get_coord(origin_a)
 
     view_pair = transform_pred.sample_view_pair(
             rng, atoms, origin_a, origins, view_pair_params)
@@ -338,6 +344,13 @@ def cgo_axes():
             CONE, *(l1 * y), *(l2 * y), d, 0, *g, *g, 1, 1,
             CONE, *(l1 * z), *(l2 * z), d, 0, *b, *b, 1, 1,
     ]
+
+def get_coord(coord_or_sele):
+    coord_pat = r'\s+'.join(3 * [r'([+-]?\d*\.?\d*)'])
+    if m := re.match(coord_pat, coord_or_sele):
+        return np.fromiter(m.groups(), dtype=float)
+    else:
+        return np.array(cmd.centerofmass(coord_or_sele))
 
 def get_alpha(img):
     img = np.sum(img, axis=0)

@@ -134,8 +134,9 @@ def _calc_sphere_cube_overlap_volume_A3(sphere, cube):
     # stability, it's still possible to get inaccurate results.  I haven't 
     # experienced these errors myself yet, but I thought it would be prudent to 
     # at least check for impossible values.
-    if not (0 <= overlap_A3 <= sphere.volume_A3):
-        raise RuntimeError("numerical instability in overlap")
+    fudge_factor = 1 + 1e-6
+    if not (0 <= overlap_A3 <= sphere.volume_A3 * fudge_factor):
+        raise RuntimeError(f"numerical instability in overlap: overlap volume ({overlap_A3} Å³) exceeds sphere volume ({sphere.volume_A3} Å³)")
 
     return overlap_A3
     

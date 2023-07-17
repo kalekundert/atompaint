@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 import pandas as pd
 import pandera as pa
@@ -8,9 +9,9 @@ from atompaint.datasets.atoms import (
         filter_nonbiological_atoms,
 )
 from atompaint.datasets.coords import make_coord_frame, invert_coord_frame
-from atompaint.datasets.voxelize import _get_max_element_radius
+from atompaint.datasets.voxelize import image_from_atoms, _get_max_element_radius
 from scipy.spatial import KDTree
-from torch.utils.data import IterableDataset
+from torch.utils.data import Dataset
 from dataclasses import dataclass, asdict
 from functools import cached_property, partial
 from pathlib import Path
@@ -36,62 +37,61 @@ In the future, I'd also like to weight based on more factors, e.g.:
 - The quality of the structure.
 """
 
-class NeighborCountDataStream(IterableDataset):
+class NeighborCountDataset(Dataset):
 
     def __init__(
             self,
-            rng,
             *,
             origins,
             input_from_atoms,
             view_pair_params,
-            batch_size,
+            epoch_size,
     ):
-        self.rng = rng
         self.origins = origins
         self.input_from_atoms = input_from_atoms
         self.view_pair_params = view_pair_params
-        self.batch_size = batch_size
+        self.epoch_size = epoch_size
 
-    def __iter__(self):
-        inputs, outputs = unzip(
-                self.sample()
-                for i in range(self.batch_size)
-        )
-        inputs = np.stack(inputs)
-        outputs = np.stack(outputs)
+    def __len__(self):
+        return self.epoch_size
 
-        return torch.from_numpy(inputs), torch.from_numpy(outputs)
+    def __getitem__(self, i):
+        rng = np.random.default_rng(i)
 
-    def sample(self):
-        origin_a, tag = sample_origin(self.origins)
-        origins_b = filter_by_tag(self.origins, tag)
-        atoms = atoms_from_tag(tag)
+        while True:
+            origin_a, tag = sample_origin(rng, self.origins)
+            origins_b = filter_by_tag(self.origins, tag)
+            atoms = atoms_from_tag(tag)
 
-        view_pair = sample_view_pair(
-                self.rng,
-                atoms,
-                origin_a,
-                origins_b,
-                self.view_pair_params,
-        )
-        input_a = self.input_from_atoms(view_pair.atoms_a)
-        input_b = self.input_from_atoms(view_pair.atoms_b)
+            try:
+                view_pair = sample_view_pair(
+                        rng,
+                        atoms,
+                        origin_a,
+                        origins_b,
+                        self.view_pair_params,
+                )
+            except NoOriginsToSample:
+                continue
 
-        inputs = np.stack([input_a, input_b])
-        return inputs, view_pair.frame_ba
+            input_a = self.input_from_atoms(view_pair.atoms_a)
+            input_b = self.input_from_atoms(view_pair.atoms_b)
+            input_ab = np.stack([input_a, input_b])
 
-class NeighborCountDataStreamForCnn(NeighborCountDataStream):
+            return (
+                    torch.from_numpy(input_ab).float(),
+                    torch.from_numpy(view_pair.frame_ab).float(),
+            )
+
+class NeighborCountDatasetForCnn(NeighborCountDataset):
 
     def __init__(
             self,
-            rng,
             *,
-            atom_db,
-            origin_db,
-            batch_size,
+            origins,
             img_params,
             max_dist_A,
+            epoch_size,
     ):
         min_dist_A = calc_min_distance_between_origins(img_params)
         view_pair_params = ViewPairParams(
@@ -101,12 +101,10 @@ class NeighborCountDataStreamForCnn(NeighborCountDataStream):
         input_from_atoms = partial(image_from_atoms, img_params=img_params)
 
         super().__init__(
-                rng=rng,
-                atom_db=atom_db,
-                origin_db=origin_db,
+                origins=origins,
                 input_from_atoms=input_from_atoms,
                 view_pair_params=view_pair_params,
-                batch_size=batch_size,
+                epoch_size=epoch_size,
         )
 
 
@@ -158,6 +156,9 @@ class OriginsSchema(pa.DataFrameModel):
     z: Series[float]
     weight: Series[float] = pa.Field(coerce=True)
 
+class NoOriginsToSample(Exception):
+    pass
+
 Origins: TypeAlias = DataFrame[OriginsSchema]
 
 # Pre-calculate origins
@@ -188,7 +189,7 @@ def choose_origins_for_atoms(tag, atoms, origin_params):
 
     # Count atoms after filtering out the nonbiological ones, so that we only 
     # get origins centered on and mostly surrounded by biological atoms.
-    n = count_nearby_atoms(atoms, origin_params.radius_A)
+    n = _count_nearby_atoms(atoms, origin_params.radius_A)
 
     df = atoms[['x', 'y', 'z']].copy()
     df['tag'] = tag
@@ -260,7 +261,8 @@ def consolidate_origins(path: Path, dry_run: bool=False):
 
     return df, status
 
-def count_nearby_atoms(atoms, radius_A):
+
+def _count_nearby_atoms(atoms, radius_A):
     """
     Calculate the number of atoms within the given radius of each given atom.
 
@@ -295,19 +297,19 @@ def sample_view_pair(rng, atoms, origin_a, origin_b_candidates, view_pair_params
 
     return ViewPair(atoms, frame_a, frame_b)
 
-@pa.check_types
 def sample_origin(rng, origins: Origins):
-    i = sample_weighted_index(rng, origins['weight'])
+    if origins.empty:
+        raise NoOriginsToSample()
+
+    i = _sample_weighted_index(rng, origins['weight'])
     return get_origin_coord(origins, i), origins['tag'].loc[i]
 
 def sample_coord_frame(rng, origin):
     """
     Return a matrix that will perform a uniformly random rotation, then move 
     the given point to the origin of the new frame.
-
-    This function uses the torch RNG.
     """
-    u = sample_uniform_unit_vector(rng)
+    u = _sample_uniform_unit_vector(rng)
     th = rng.uniform(0, 2 * pi)
     return make_coord_frame(origin, u * th)
 
@@ -332,7 +334,17 @@ def calc_min_distance_between_origins(img_params):
 
     return 2 * (grid_radius_A + atom_radius_A)
 
-def sample_uniform_unit_vector(rng):
+def get_origin_coord(origins, i):
+    # Important to select columns before `loc`: This ensures that the resulting 
+    # array is of dtype float rather than object, because all of the selected 
+    # rows are float.
+    return origins[['x', 'y', 'z']].loc[i].values
+
+def get_origin_coords(origins):
+    return origins[['x', 'y', 'z']].values
+
+
+def _sample_uniform_unit_vector(rng):
     # https://stats.stackexchange.com/questions/7977/how-to-generate-uniformly-distributed-points-on-the-surface-of-the-3-d-unit-sphe
 
     # I chose the rejection sampling approach rather than the Gaussian approach 
@@ -346,14 +358,6 @@ def sample_uniform_unit_vector(rng):
         if 0 < m < 1:
             return v / m
 
-def sample_weighted_index(rng, weights: pd.Series):
+def _sample_weighted_index(rng, weights: pd.Series):
     return rng.choice(weights.index, p=weights / weights.sum())
 
-def get_origin_coord(origins, i):
-    # Important to select columns before `loc`: This ensures that the resulting 
-    # array is of dtype float rather than object, because all of the selected 
-    # rows are float.
-    return origins[['x', 'y', 'z']].loc[i].values
-
-def get_origin_coords(origins):
-    return origins[['x', 'y', 'z']].values

@@ -10,7 +10,9 @@ import importlib.resources
 import re
 import os
 
-from .coords import transform_coords, homogenize_coords
+from .coords import (
+        Coord, Coords3, Coords4, Frame, transform_coords, homogenize_coords,
+)
 from more_itertools import one
 from functools import cache, cached_property
 from pathlib import Path
@@ -28,12 +30,12 @@ class AtomSchema(pa.DataFrameModel):
 
 Atoms: TypeAlias = DataFrame[AtomSchema]
 
-def load_pisces(cullpdb_path):
+def load_pisces(cullpdb_path: Path):
     df = pd.read_fwf(cullpdb_path)
     df['tag'] = 'pisces/' + df['PDBchain']
     return df
 
-def parse_pisces_path(path):
+def parse_pisces_path(path: Path):
     """
     Attempt to extract as much metadata as possible from the name of a file 
     downloaded from the PISCES server.
@@ -70,7 +72,7 @@ def load_nonbiological_ligands():
             names=['id', 'n', 'het', 'mw', 'formula', 'role', 'notes'],
     )
 
-def filter_nonbiological_atoms(atoms):
+def filter_nonbiological_atoms(atoms: Atoms) -> Atoms:
     # I'm just checking that the 3-letter ID string matches.  Ideally, I'd also 
     # check that the molecular formula matches, because I'm pretty sure that 
     # these 3-letter IDs aren't guaranteed to be unique between structures.  
@@ -93,7 +95,7 @@ def atoms_from_tag(tag: str) -> Atoms:
         # imagine that this would be wrong in some cases, but I think it'll be 
         # right more often that not.
         id, chain = id[:4], id[4]
-        path = get_pdb_redo_path(id)
+        path = _get_pdb_redo_path(id)
         return atoms_from_mmcif(path, chain=chain)
     else:
         raise ValueError(f"unknown tag prefix: {tag}")
@@ -141,28 +143,36 @@ def atoms_from_pymol(sele: str, state=-1) -> Atoms:
 
     return pd.DataFrame(rows, columns=['monomer', 'element', 'x', 'y', 'z', 'occupancy'])
 
-def get_pdb_redo_path(id: str) -> Path:
+def _get_pdb_redo_path(id: str) -> Path:
     id = id.lower()
     root = Path(os.environ['PDB_DIR'])
     return root / id[1:3] / f'{id}_final.cif'
 
 
-def get_atom_coord(atoms, i):
+def get_atom_coord(atoms: Atoms, i: int) -> Coord:
     # Important to select columns before `loc`: This ensures that the resulting 
     # array is of dtype float rather than object, because all of the selected 
     # rows are float.
     return atoms[['x', 'y', 'z']].loc[i].values
 
-def get_atom_coords(atoms, *, homogeneous=False):
+def get_atom_coords(
+        atoms: Atoms,
+        *,
+        homogeneous: bool=False,
+) -> Coords3 | Coords4:
     coords = atoms[['x', 'y', 'z']].values
     return homogenize_coords(coords) if homogeneous else coords
 
-def set_atom_coords(atoms, coords):
+def set_atom_coords(atoms: Atoms, coords: Coords3 | Coords4):
     # Only use the first three columns, in case we were given homogeneous 
     # coordinates.
     atoms[['x', 'y', 'z']] = coords[:, 0:3]
 
-def transform_atom_coords(atoms_x, frame_xy, inplace=False):
+def transform_atom_coords(
+        atoms_x: Atoms,
+        frame_xy: Frame,
+        inplace: bool=False,
+) -> Atoms:
     coords_x = get_atom_coords(atoms_x, homogeneous=True)
     coords_y = transform_coords(coords_x, frame_xy)
 

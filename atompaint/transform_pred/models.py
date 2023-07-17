@@ -6,9 +6,9 @@ from escnn.gspaces import no_base_space
 from itertools import pairwise
 from more_itertools import unique_everseen as unique
 
-from .vendored.pytorch3d import rotation_6d_to_matrix
-from .downsample import EquivariantCnn, IcosahedralCnn, FourierCnn
-from .type_hints import LayerFactory
+from atompaint.vendored.pytorch3d import rotation_6d_to_matrix
+from atompaint.downsample import EquivariantCnn, IcosahedralCnn, FourierCnn
+from atompaint.type_hints import LayerFactory
 
 class TransformationPredictor(torch.nn.Module):
     """
@@ -40,7 +40,7 @@ class TransformationPredictor(torch.nn.Module):
                 Unlike the `CoordFrameMlp` argument of the same name, this 
                 argument only specifies the hidden layers and does not include 
                 the input layer.  The reason is that the input layer can be 
-                inferred from the given model.
+                inferred from the encoder.
 
                 If an integer is given (instead of a list of integers), this is 
                 interpreted as the number of hidden layers to create.  Each 
@@ -108,9 +108,9 @@ class IcosahedralTransformationPredictor(TransformationPredictor):
     def __init__(
             self, *,
             conv_channels: list[int] = [1, 1],
-            conv_field_of_view: int = 4,
-            pool_field_of_view: int = 2,
-            mlp_channels: list[int] = [1],
+            conv_field_of_view: int | list[int] = 4,
+            pool_field_of_view: int | list[int] = 2,
+            mlp_channels: int | list[int] = [1],
     ):
         super().__init__(
                 IcosahedralCnn(
@@ -130,9 +130,9 @@ class FourierTransformationPredictor(TransformationPredictor):
     def __init__(
             self, *,
             conv_channels: list[int] = [1, 1],
-            conv_field_of_view: int = 4,
-            conv_stride: int = 2,
-            mlp_channels: list[int] = [1],
+            conv_field_of_view: int | list[int] = 4,
+            conv_stride: int | list[int] = 2,
+            mlp_channels: int | list[int] = [1],
             frequencies: int = 2,
     ):
         super().__init__(
@@ -265,38 +265,6 @@ class CoordFrameMlp(torch.nn.Module):
 
         return frame
 
-class CoordFrameMseLoss(torch.nn.Module):
-    """
-    Calculate the distance between two coordinate frames.
-    """
-
-    def __init__(self, radius):
-        super().__init__()
-        self.radius = radius
-
-    def forward(self, predicted_frame, expected_frame):
-        """
-        Arguments:
-            predicted_frame:
-                The coordinate frames predicted by the context encoder, as 
-                tensors of dimension (B, 4, 4). 
-
-                B: minibatch size
-                4,4: 3D roto-translation matrix
-
-            expected_frame:
-                The true coordinate frames, as tensors of dimension (B, 4, 4).
-        """
-        xyz = torch.cat([
-                torch.eye(3) * self.radius,
-                torch.ones((1,3)),
-        ])
-        xyz_pred = predicted_frame @ xyz
-        xyz_expect = expected_frame @ xyz
-
-        # This is mean-squared distance.  No reason to bother calculating the 
-        # square root; it won't change the location of the minimum.
-        return torch.mean(torch.sum((xyz_pred - xyz_expect)**2, axis=1))
 
 def flatten_base_space(geom_tensor):
     # TODO: I'd like to contribute this as a method of the `GeometricTensor` 
@@ -306,6 +274,8 @@ def flatten_base_space(geom_tensor):
     spatial_dims = in_type.gspace.dimensionality
 
     assert geom_tensor.coords is None
+    # If you get this error; it's because your convolutional layers are not 
+    # sized to your input properly.
     assert all(x == 1 for x in tensor.shape[-spatial_dims:])
 
     out_shape = tensor.shape[:-spatial_dims]

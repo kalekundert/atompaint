@@ -2,7 +2,7 @@ test_equivariance:
   -
     id: icosahedral
     network:
-      > ap.IcosahedralTransformationPredictor(
+      > IcosahedralTransformationPredictor(
       >         conv_channels=[1, 1, 1, 1],
       >         conv_field_of_view=3,
       >         pool_field_of_view=2,
@@ -12,7 +12,7 @@ test_equivariance:
   -
     id: fourier
     network:
-      > ap.FourierTransformationPredictor(
+      > FourierTransformationPredictor(
       >         frequencies=1,
       >         conv_channels=[1, 1, 1, 1],
       >         conv_field_of_view=3,

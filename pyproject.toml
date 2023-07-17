@@ -50,6 +50,7 @@ doc = [
 
 [project.scripts]
 ap_choose_origins = "atompaint.datasets.transform_pred.cli:main"
+ap_transform_pred = "atompaint.transform_pred.training:main"
 
 [tool.pytest.ini_options]
 addopts = "--doctest-modules --doctest-glob='*.rst'"

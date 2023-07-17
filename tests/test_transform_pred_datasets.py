@@ -1,4 +1,4 @@
-import atompaint.datasets.transform_pred.neighbor_count as apd
+import atompaint.transform_pred.datasets.neighbor_count as apd
 import numpy as np
 import pandas as pd
 import pytest
@@ -38,6 +38,7 @@ def origin_params(params):
             radius_A=float(params['radius_A']),
             min_nearby_atoms=int(params['min_nearby_atoms']),
     )
+
 
 def test_origin_coord():
     rows = [
@@ -87,7 +88,7 @@ def test_sample_weighted_index():
     actual = np.zeros(len(weights))
 
     for i in range(n):
-        i = apd.sample_weighted_index(rng, weights)
+        i = apd._sample_weighted_index(rng, weights)
         actual[i] += 1
 
     cov = multinomial.cov(n, probs)
@@ -115,7 +116,7 @@ def test_sample_uniform_unit_vector():
     x = np.array([1, 0, 0])  # arbitrary reference point
 
     for i in range(n):
-        y = apd.sample_uniform_unit_vector(rng)
+        y = apd._sample_uniform_unit_vector(rng)
         d[i] = np.linalg.norm(y - x)
 
     cdf = lambda d: d**2 / 4
@@ -251,7 +252,7 @@ def test_view_pair(atoms_i, frame_ia, frame_ib, atoms_a, atoms_b):
         schema=pff.cast(atoms=atoms, radius_A=float, expected=matrix),
 )
 def test_count_nearby_atoms(atoms, radius_A, expected):
-    counts = apd.count_nearby_atoms(atoms, radius_A)
+    counts = apd._count_nearby_atoms(atoms, radius_A)
     np.testing.assert_array_equal(counts.values, expected)
 
 @pff.parametrize(

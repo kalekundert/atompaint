@@ -6,9 +6,7 @@ from escnn.nn import *
 from itertools import pairwise
 from more_itertools import all_equal
 
-from collections.abc import Iterable
-
-from .mask import MaskModule
+from .util import get_scalar
 from .type_hints import LayerFactory
 
 # My initial thought was to use the following numbers of latent channels:
@@ -45,8 +43,8 @@ class EquivariantCnn(torch.nn.Module):
                 yield FieldType(gspace, n * latent_repr)
 
         def iter_layers():
-            for field_in, field_out in pairwise(self.fields):
-                yield from layer_factory(field_in, field_out)
+            for i, (field_in, field_out) in enumerate(pairwise(self.fields)):
+                yield from layer_factory(i, field_in, field_out)
 
         self.gspace = gspace
         self.out_repr = latent_repr
@@ -72,10 +70,6 @@ class EquivariantCnn(torch.nn.Module):
         assert all_equal(input.shape[-3:])
 
         input = GeometricTensor(input, self.fields[0])
-
-        mask = MaskModule(self.fields[0], input.shape[-1])
-        input = mask(input)
-
         return self.layers(input)
 
 class IcosahedralCnn(EquivariantCnn):
@@ -89,8 +83,8 @@ class IcosahedralCnn(EquivariantCnn):
     def __init__(
             self, *,
             channels: list[int] = [1, 1],
-            conv_field_of_view: int = 4,
-            pool_field_of_view: int = 2,
+            conv_field_of_view: int | list[int] = 4,
+            pool_field_of_view: int | list[int] = 2,
     ):
         gspace = icoOnR3()
         super().__init__(
@@ -100,15 +94,15 @@ class IcosahedralCnn(EquivariantCnn):
 
                 # Order of layers taken from this Stack Overflow post:
                 # https://stackoverflow.com/questions/39691902/ordering-of-batch-normalization-and-dropout
-                layer_factory=lambda in_type, out_type: [
+                layer_factory=lambda i, in_type, out_type: [
                     # Might be better to use `R3IcoConv`, but at the moment it 
                     # seems to be broken.  See QUVA-Lab/escnn#52.
-                    R3Conv(in_type, out_type, conv_field_of_view),
+                    R3Conv(in_type, out_type, get_scalar(conv_field_of_view, i)),
                     IIDBatchNorm3d(out_type),
                     ReLU(out_type),
                     PointwiseMaxPoolAntialiased3D(
                         out_type,
-                        pool_field_of_view,
+                        get_scalar(pool_field_of_view, i),
                     ),
                 ],
         )
@@ -121,8 +115,8 @@ class FourierCnn(EquivariantCnn):
     def __init__(
             self, *,
             channels: list[int] = [1, 1],
-            conv_field_of_view: int = 4,
-            conv_stride: int = 2,
+            conv_field_of_view: int | list[int] = 4,
+            conv_stride: int | list[int] = 2,
             frequencies: int = 2,
     ):
         gspace = rot3dOnR3(frequencies)
@@ -136,12 +130,12 @@ class FourierCnn(EquivariantCnn):
         # the *layer_factory* callback, but doing so is pretty hacky.
         self.irreps = irreps
 
-        curr_layer = 0
-
-        def layer_factory(in_type, out_type):
+        def layer_factory(i, in_type, out_type):
             yield R3Conv(
-                    in_type, out_type, conv_field_of_view,
-                    stride=conv_stride,
+                    in_type,
+                    out_type,
+                    kernel_size=get_scalar(conv_field_of_view, i),
+                    stride=get_scalar(conv_stride, i),
             )
 
             # Batch normalization gets noisy when the combined number of 
@@ -151,9 +145,7 @@ class FourierCnn(EquivariantCnn):
             # to skip the batch normalization step for the last layer of the 
             # CNN, where the spatial dimensions will usually be 1x1x1.
 
-            nonlocal curr_layer; curr_layer += 1
-
-            if curr_layer < len(channels) - 1:
+            if i < len(channels) - 2:
                 yield IIDBatchNorm3d(out_type)
 
             yield FourierPointwise(

@@ -1,4 +1,4 @@
-import atompaint as ap
+import atompaint.transform_pred as apt
 import torch
 import pytest
 import parametrize_from_file as pff
@@ -11,6 +11,7 @@ from math import radians
 from utils import *
 
 with_math = pff.Namespace('from math import *')
+with_apt = pff.Namespace('from atompaint.transform_pred import *')
 
 def se3_matrix(params):
     """
@@ -55,7 +56,7 @@ def vector_from_str(vector_str):
 
 @pff.parametrize(
         schema=pff.cast(
-            network=with_ap.eval(defer=True),
+            network=with_apt.eval(defer=True),
             input_size=int,
         ),
 )
@@ -111,5 +112,5 @@ def test_equivariance(network, input_size):
         ],
 )
 def test_coord_frame_mse_loss(ref, query, radius, loss):
-    loss_fn = ap.CoordFrameMseLoss(radius)
+    loss_fn = apt.CoordFrameMseLoss(radius)
     assert loss_fn(query, ref) == pytest.approx(loss)
