@@ -21,7 +21,15 @@ class CoordFrameMseLoss(torch.nn.Module):
 
     def __init__(self, radius_A):
         super().__init__()
-        self.radius_A = radius_A
+        self.register_buffer(
+                'axis_coords',
+                torch.cat([
+                    torch.eye(3) * radius_A,
+                    torch.ones((1,3)),
+                ]),
+                persistent=False,
+        )
+
 
     def forward(self, predicted_frame, expected_frame):
         """
@@ -36,10 +44,7 @@ class CoordFrameMseLoss(torch.nn.Module):
             expected_frame:
                 The true coordinate frames, as tensors of dimension (B, 4, 4).
         """
-        xyz = torch.cat([
-                torch.eye(3) * self.radius_A,
-                torch.ones((1,3)),
-        ])
+        xyz = self.get_buffer('axis_coords')
         xyz_pred = predicted_frame @ xyz
         xyz_expect = expected_frame @ xyz
 

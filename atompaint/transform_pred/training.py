@@ -70,6 +70,12 @@ class DataModule(pl.LightningDataModule):
     def train_dataloader(self):
         return self.data_loader
 
+    def on_after_batch_transfer(self, batch, i):
+        # If I remove this method, the second tensor stays on the CPU...
+        # This has to be a lightning bug.  I'll have to make a MWE and submit it.
+        #debug(batch, i)
+        pass
+
 def main():
     LightningCLI(PredictorModule, DataModule)
 
