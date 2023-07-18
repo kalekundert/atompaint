@@ -258,7 +258,7 @@ class CoordFrameMlp(torch.nn.Module):
 
         xyz_rot = self.mlp(input).tensor
 
-        frame = torch.zeros((b,4,4))
+        frame = torch.zeros((b,4,4), device=xyz_rot.device)
         frame[:, 0:3, 0:3] = rotation_6d_to_matrix(xyz_rot[:, 3:])
         frame[:, 0:3,   3] = xyz_rot[:, :3]
         frame[:,   3,   3] = 1
