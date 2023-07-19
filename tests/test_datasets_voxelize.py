@@ -56,7 +56,7 @@ def indices(params):
 
 def image_params(params):
     grid_ = grid(params['grid'])
-    channels = params['channels'].split(' ')
+    channels = params.get('channels', '.*').split(' ')
 
     try:
         radii = params['element_radii_A']
@@ -147,6 +147,13 @@ def test_make_cube():
 
     assert cube.center_A == approx([0.75, 1.75, 3.25])
     assert cube.length_A == approx(0.5)
+
+@pff.parametrize(
+        schema=pff.cast(atoms=atoms, img_params=image_params, expected=atoms),
+)
+def test_discard_atoms_outside_image(atoms, img_params, expected):
+    actual = apdv._discard_atoms_outside_image(atoms, img_params)
+    pd.testing.assert_frame_equal(actual, expected)
 
 @pff.parametrize(
         schema=pff.cast(grid=grid, voxels=indices, expected=indices),

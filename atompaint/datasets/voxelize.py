@@ -81,7 +81,6 @@ class ImageParams:
 
 Image: TypeAlias = NDArray
 
-@pa.check_types
 def image_from_atoms(
         atoms: Atoms,
         img_params: ImageParams,
@@ -90,6 +89,10 @@ def image_from_atoms(
 
     img = _make_empty_image(img_params)
     channel_cache = {} if channel_cache is None else channel_cache
+
+    # Without this filter, `find_voxels_possibly_contacting_sphere()` becomes a
+    # performance bottleneck.
+    atoms = _discard_atoms_outside_image(atoms, img_params)
 
     for row in atoms.itertuples(index=False):
         atom = _make_atom(row, img_params, channel_cache)
@@ -181,6 +184,22 @@ def _find_voxels_containing_coords(grid, coords_A):
 
     ijk = origin_to_coords_A / grid.resolution_A
     return np.rint(ijk).astype(int)
+
+def _discard_atoms_outside_image(atoms, img_params):
+    grid = img_params.grid
+    max_r = _get_max_element_radius(img_params.element_radii_A)
+
+    min_corner = grid.center_A - (grid.length_A / 2 + max_r)
+    max_corner = grid.center_A + (grid.length_A / 2 + max_r)
+
+    return atoms[
+            (atoms['x'] > min_corner[0]) &
+            (atoms['x'] < max_corner[0]) &
+            (atoms['y'] > min_corner[1]) &
+            (atoms['y'] < max_corner[1]) &
+            (atoms['z'] > min_corner[2]) &
+            (atoms['z'] < max_corner[2])
+    ]
 
 def _discard_voxels_outside_image(grid, voxels):
     not_too_low = voxels.min(axis=1) >= 0
