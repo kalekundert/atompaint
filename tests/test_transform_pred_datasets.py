@@ -66,34 +66,10 @@ def test_origin_coord():
     # Origins are often filtered, so the index numbers may be greater than the 
     # actual number of elements in the data frame.  Make sure this case works.
     np.testing.assert_array_equal(
-            apd.get_origin_coord(origins, 2),
+            apd.get_origin_coord(origins, 1),
             np.array([5, 6, 7]),
             #strict=True,
     )
-
-def test_sample_weighted_index():
-    n = 1000
-    rng = np.random.default_rng(1)
-
-    # Calculate the Mahalanobis distance between the empirical sample and the 
-    # expected results.  If the sampling is properly weighted, the distance 
-    # should be less than ≈2 95% of the time.  That said, I set the random seed 
-    # to 1, because I get a distance slightly greater than 2 with a seed of 0.
-
-    # https://stats.stackexchange.com/questions/218619/mahalanobis-distance-what-if-s-is-not-invertible
-
-    weights = pd.Series([1, 2, 3])
-    probs = weights.values / sum(weights)
-    expected = n * probs
-    actual = np.zeros(len(weights))
-
-    for i in range(n):
-        i = apd._sample_weighted_index(rng, weights)
-        actual[i] += 1
-
-    cov = multinomial.cov(n, probs)
-    dist = mahalanobis(expected, actual, np.linalg.pinv(cov))
-    assert dist < 2
 
 def test_sample_uniform_unit_vector():
     # The following references give the distribution for the distance between 
@@ -178,13 +154,6 @@ def test_calc_min_distance():
 
     assert np.all(corner < offset - corner)
     assert np.all(corner + corner < offset)
-
-@pff.parametrize(schema=pff.cast(origins=origins, expected=origins))
-def test_filter_by_tag(origins, tag, expected):
-    actual = apd.filter_by_tag(origins, tag)
-    # Filtering can change the indices of the data frame, so we need to compare 
-    # in a way that ignores the index.
-    assert actual.to_dict('records') == expected.to_dict('records')
 
 @pff.parametrize(
         schema=pff.cast(

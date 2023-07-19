@@ -52,6 +52,14 @@ class NeighborCountDataset(Dataset):
         self.view_pair_params = view_pair_params
         self.epoch_size = epoch_size
 
+        # Without this grouping, getting all the origins from a certain tag
+        # would require iterating over every origin, and would be a performance
+        # bottleneck.  Note that it's slightly faster to create a dictionary
+        # here, instead of relying on the `groupby` object.  But this approach
+        # uses half as much memory (see expt #224), and I think that's more
+        # likely to matter than the speed difference.
+        self.origins_by_tag = origins.groupby('tag')
+
     def __len__(self):
         return self.epoch_size
 
@@ -60,7 +68,7 @@ class NeighborCountDataset(Dataset):
 
         while True:
             origin_a, tag = sample_origin(rng, self.origins)
-            origins_b = filter_by_tag(self.origins, tag)
+            origins_b = self.origins_by_tag.get_group(tag)
             atoms = atoms_from_tag(tag)
 
             try:
@@ -301,8 +309,8 @@ def sample_origin(rng, origins: Origins):
     if origins.empty:
         raise NoOriginsToSample()
 
-    i = _sample_weighted_index(rng, origins['weight'])
-    return get_origin_coord(origins, i), origins['tag'].loc[i]
+    i = _sample_uniform_iloc(rng, origins)
+    return get_origin_coord(origins, i), get_origin_tag(origins, i)
 
 def sample_coord_frame(rng, origin):
     """
@@ -318,10 +326,6 @@ def filter_by_distance(origins, coord, *, min_dist_A, max_dist_A):
     dist = np.linalg.norm(origin_coords - coord, axis=1)
     return origins[(min_dist_A <= dist) & (dist <= max_dist_A)]
 
-def filter_by_tag(origins, tag):
-    mask = origins['tag'] == tag
-    return origins[mask]
-
 def calc_min_distance_between_origins(img_params):
     # Calculate the radius of the sphere that inscribes in grid.  This ensures 
     # that the grids won't overlap, no matter how they're rotated.
@@ -334,14 +338,17 @@ def calc_min_distance_between_origins(img_params):
 
     return 2 * (grid_radius_A + atom_radius_A)
 
-def get_origin_coord(origins, i):
-    # Important to select columns before `loc`: This ensures that the resulting 
-    # array is of dtype float rather than object, because all of the selected 
-    # rows are float.
-    return origins[['x', 'y', 'z']].loc[i].values
+def get_origin_coord(origins: Origins, i: int):
+    # Important to select columns before `iloc`: This ensures that the
+    # resulting array is of dtype float rather than object, because all of the
+    # selected rows are float.
+    return origins[['x', 'y', 'z']].iloc[i].values
 
-def get_origin_coords(origins):
+def get_origin_coords(origins: Origins):
     return origins[['x', 'y', 'z']].values
+
+def get_origin_tag(origins: Origins, i: int):
+    return origins.iloc[i]['tag']
 
 
 def _sample_uniform_unit_vector(rng):
@@ -358,6 +365,5 @@ def _sample_uniform_unit_vector(rng):
         if 0 < m < 1:
             return v / m
 
-def _sample_weighted_index(rng, weights: pd.Series):
-    return rng.choice(weights.index, p=weights / weights.sum())
-
+def _sample_uniform_iloc(rng, df):
+    return rng.integers(0, df.shape[0])
