@@ -23,15 +23,16 @@ from numpy.typing import NDArray
 from typing import TypeAlias
 
 """\
-Consider each atom a possible origin, and weight those origins by the number of
-neighboring atoms within some radius.
+Consider each atom a possible origin, so long as it has enough non-solvent
+atoms in its immediate vicinity.
 
-This is a relatively simple way to pick training examples.  The purpose of the 
-weighting is to discourage training on surface regions, since we don't want the 
-network to get in the habit of guessing based on the orientation of the 
-surface.
+This is a relatively simple way to pick training examples.  The purpose of the
+neighbor threshold is to discourage training on surface regions, since we don't
+want to train on examples that genuinely don't have enough information to make
+a prediction.  We also don't want the network to get in the habit of guessing
+based on the orientation of the surface.
 
-In the future, I'd also like to weight based on more factors, e.g.:
+In the future, I'd also like to threshold on more factors, e.g.:
 
 - The specific atoms in each view, to avoid redundancy.
 - The quality of the structure.
@@ -45,12 +46,14 @@ class NeighborCountDataset(Dataset):
             origins,
             input_from_atoms,
             view_pair_params,
-            epoch_size,
+            low_seed,
+            high_seed,
     ):
         self.origins = origins
         self.input_from_atoms = input_from_atoms
         self.view_pair_params = view_pair_params
-        self.epoch_size = epoch_size
+        self.low_seed = low_seed
+        self.epoch_size = high_seed - low_seed
 
         # Without this grouping, getting all the origins from a certain tag
         # would require iterating over every origin, and would be a performance
@@ -64,7 +67,9 @@ class NeighborCountDataset(Dataset):
         return self.epoch_size
 
     def __getitem__(self, i):
-        rng = np.random.default_rng(i)
+        assert 0 <= i < self.epoch_size
+
+        rng = np.random.default_rng(self.low_seed + i)
 
         while True:
             origin_a, tag = sample_origin(rng, self.origins)
@@ -99,7 +104,8 @@ class NeighborCountDatasetForCnn(NeighborCountDataset):
             origins,
             img_params,
             max_dist_A,
-            epoch_size,
+            low_seed,
+            high_seed,
     ):
         min_dist_A = calc_min_distance_between_origins(img_params)
         view_pair_params = ViewPairParams(
@@ -112,7 +118,8 @@ class NeighborCountDatasetForCnn(NeighborCountDataset):
                 origins=origins,
                 input_from_atoms=input_from_atoms,
                 view_pair_params=view_pair_params,
-                epoch_size=epoch_size,
+                low_seed=low_seed,
+                high_seed=high_seed,
         )
 
 
