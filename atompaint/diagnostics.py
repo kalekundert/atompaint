@@ -179,11 +179,18 @@ def query_memory_maps(pids):
     return df
 
 def query_memory_maps_for_pid(pid):
-    p = Process(pid)
-    df = pd.DataFrame(p.memory_maps())
-    df['pid'] = pid
-    df['parent_pid'] = p.ppid()
-    return df
+    try:
+        p = Process(pid)
+        df = pd.DataFrame(p.memory_maps())
+        df['pid'] = pid
+        df['parent_pid'] = p.ppid()
+        return df
+
+    # It's possible that the process in question will have exited in between 
+    # now and when we got it's PID, so we have to handle this case gracefully.
+    except psutil.NoSuchProcess:
+        return pd.DataFrame()
+
 
 def get_elapsed_time(t0):
     return time.monotonic() - t0
