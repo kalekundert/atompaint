@@ -21,11 +21,24 @@ class PredictorModule(pl.LightningModule):
         self.model = model
         self.loss = CoordFrameMseLoss(loss_radius_A)
 
-    def training_step(self, batch, _):
+    def forward(self, batch):
         x, y = batch
         y_hat = self.model(x)
-        loss = self.loss(y_hat, y)
+        return self.loss(y_hat, y)
+
+    def training_step(self, batch, _):
+        loss = self.forward(batch)
         self.log('train_loss', loss)
+        return loss
+
+    def validation_step(self, batch, _):
+        loss = self.forward(batch)
+        self.log('val_loss', loss)
+        return loss
+
+    def test_step(self, batch, _):
+        loss = self.forward(batch)
+        self.log('test_loss', loss)
         return loss
 
 class DataModule(pl.LightningDataModule):
@@ -46,40 +59,66 @@ class DataModule(pl.LightningDataModule):
 
             # Data loader parameters
             batch_size: int,
-            epoch_size: int,
+            train_epoch_size: int,
+            val_epoch_size: int = None,
+            test_epoch_size: int = None,
             num_workers: Optional[int] = None,
     ):
         super().__init__()
-        self.dataset = NeighborCountDatasetForCnn(
-                origins=load_origins(origins_path),
-                img_params=ImageParams(
-                    grid=Grid(
-                        length_voxels=grid_length_voxels,
-                        resolution_A=grid_resolution_A,
-                    ),
-                    channels=element_channels,
-                    element_radii_A=element_radii_A,
+
+        origins = load_origins(origins_path)
+        img_params = ImageParams(
+                grid=Grid(
+                    length_voxels=grid_length_voxels,
+                    resolution_A=grid_resolution_A,
                 ),
-                max_dist_A=max_dist_between_views_A,
-                epoch_size=epoch_size,
+                channels=element_channels,
+                element_radii_A=element_radii_A,
         )
 
         if num_workers is None:
             try:
-                # Don't exceed the number of cores allocated to the job, and
-                # don't forget to count the main process.
-                num_workers = int(os.environ['SLURM_JOB_CPUS_PER_NODE']) - 1
+                num_workers = int(os.environ['SLURM_JOB_CPUS_PER_NODE'])
             except KeyError:
                 num_workers = os.cpu_count()
 
-        self.data_loader = DataLoader(
-                self.dataset,
-                batch_size=batch_size,
-                num_workers=num_workers,
-        )
+        def make_dataset(low_seed, high_seed):
+            return NeighborCountDatasetForCnn(
+                    origins=origins,
+                    img_params=img_params,
+                    max_dist_A=max_dist_between_views_A,
+                    low_seed=low_seed,
+                    high_seed=high_seed,
+            )
+
+        def make_dataloader(low_seed, high_seed):
+            return DataLoader(
+                    make_dataset(low_seed, high_seed),
+                    batch_size=batch_size,
+                    num_workers=num_workers,
+            )
+
+        i = train_epoch_size
+        self._train_dataloader = make_dataloader(0, i)
+        self._val_dataloader = None
+        self._test_dataloader = None
+
+        if val_epoch_size is not None:
+            j = i + val_epoch_size
+            self._val_dataloader = make_dataloader(i, j)
+
+            if test_epoch_size is not None:
+                k = j + test_epoch_size
+                self._test_dataloader = make_dataloader(j, k)
 
     def train_dataloader(self):
-        return self.data_loader
+        return self._train_dataloader
+
+    def val_dataloader(self):
+        return self._val_dataloader
+
+    def test_dataloader(self):
+        return self._test_dataloader
 
 def main():
     from lightning.pytorch.profilers import PyTorchProfiler
