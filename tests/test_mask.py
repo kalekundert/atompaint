@@ -1,6 +1,6 @@
-import atompaint as ap
 import torch
 
+from atompaint.mask import MaskModule
 from escnn.gspaces import rot3dOnR3
 from escnn.nn import FieldType, GeometricTensor
 
@@ -10,7 +10,7 @@ def test_mask():
 
     # Use a very low standard deviation to make the transition between 
     # masked/unmasked more dramatic.
-    mask = ap.MaskModule(in_type, 5, margin=0, sigma=0.1)
+    mask = MaskModule(in_type, 5, margin=0, sigma=0.1)
 
     x = GeometricTensor(
             torch.ones(1, 1, 5, 5, 5),
