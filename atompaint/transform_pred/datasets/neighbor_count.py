@@ -169,7 +169,6 @@ class OriginsSchema(pa.DataFrameModel):
     x: Series[float]
     y: Series[float]
     z: Series[float]
-    weight: Series[float] = pa.Field(coerce=True)
 
 class NoOriginsToSample(Exception):
     pass
@@ -197,7 +196,9 @@ def choose_origins_for_tags(tags, origin_params):
 
         status['tags_loaded'].append(tag)
 
-    return pd.concat(dfs, ignore_index=True), status
+    df = pd.concat(dfs, ignore_index=True), status
+    df['tag'] = df['tag'].astype('category')
+    return df
 
 def choose_origins_for_atoms(tag, atoms, origin_params):
     atoms = filter_nonbiological_atoms(atoms)
@@ -208,15 +209,16 @@ def choose_origins_for_atoms(tag, atoms, origin_params):
 
     df = atoms[['x', 'y', 'z']].copy()
     df['tag'] = tag
-    df['weight'] = 1
     return df[n >= origin_params.min_nearby_atoms]
 
 def load_origins(path: Path):
     dfs = [
-            pd.read_parquet(p)
+            pd.read_parquet(p).drop(columns='weight', errors='ignore')
             for p in sorted(path.glob('origins.parquet*'))
     ]
-    return pd.concat(dfs, ignore_index=True)
+    df = pd.concat(dfs, ignore_index=True)
+    df['tag'] = df['tag'].astype('category')
+    return df
 
 def load_origin_params(path: Path):
     with open(path / 'params.json') as f:

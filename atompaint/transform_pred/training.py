@@ -122,7 +122,7 @@ class DataModule(pl.LightningDataModule):
 
 def main():
     from lightning.pytorch.profilers import PyTorchProfiler
-    from atompaint.diagnostics.shared_mem import SharedMemoryProfiler
+    from atompaint.diagnostics.shared_mem.profiler import SharedMemoryProfiler
 
     LightningCLI(
             PredictorModule, DataModule,
