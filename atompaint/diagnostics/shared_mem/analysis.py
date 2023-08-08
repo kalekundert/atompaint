@@ -93,7 +93,7 @@ def plot_pss_trace(ax, mm, style, metrics=None):
                 time,
                 all_pss,
                 color=style['color'],
-                zorder=2,
+                zorder=5,
         )
         legend_handles['total'] = Line2D(
                 [], [],
@@ -108,7 +108,7 @@ def plot_pss_trace(ax, mm, style, metrics=None):
                 private_pss,
                 color=style['color'],
                 linestyle=dot_dash,
-                zorder=1,
+                zorder=4,
         )
         legend_handles['private'] = Line2D(
                 [], [],
@@ -124,7 +124,7 @@ def plot_pss_trace(ax, mm, style, metrics=None):
                 shared_pss,
                 color=style['color'],
                 linestyle=dot_dot,
-                zorder=0,
+                zorder=3,
         )
         legend_handles['shared'] = Line2D(
                 [], [],
@@ -334,7 +334,7 @@ def parse_levels(levels_str):
     return [int(x) for x in levels_str.split(',')] if levels_str else None
 
 def parse_level(level_str):
-    return int(x) if level_str else None
+    return int(level_str) if level_str else None
 
 class UsageError(Exception):
     pass
