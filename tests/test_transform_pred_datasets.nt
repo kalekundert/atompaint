@@ -1,17 +1,17 @@
 test_filter_by_distance:
   -
     origins:
-      > a 0 0 0 1
-      > a 0 0 1 1
-      > a 0 0 2 1
-      > a 0 0 3 1
-      > a 0 0 4 1
+      > a 0 0 0
+      > a 0 0 1
+      > a 0 0 2
+      > a 0 0 3
+      > a 0 0 4
     center: 0 0 2
     min_dist_A: 0.5
     max_dist_A: 1.5
     expected:
-      > a 0 0 1 1
-      > a 0 0 3 1
+      > a 0 0 1
+      > a 0 0 3
 
 test_view_pair:
   -
@@ -143,7 +143,7 @@ test_choose_origins_for_atoms:
       radius_A: 1.01
       min_nearby_atoms: 3
     expected:
-      > 9xyz 0 0 1 1
+      > 9xyz 0 0 1
   -
     id: 3d
     tag: 9xyz
@@ -180,13 +180,13 @@ test_choose_origins_for_atoms:
       radius_A: 1.01
       min_nearby_atoms: 6
     expected:
-      > 9xyz -1  0  0  1
-      > 9xyz  0 -1  0  1
-      > 9xyz  0  0 -1  1
-      > 9xyz  0  0  0  1
-      > 9xyz  0  0  1  1
-      > 9xyz  0  1  0  1
-      > 9xyz  1  0  0  1
+      > 9xyz -1  0  0
+      > 9xyz  0 -1  0
+      > 9xyz  0  0 -1
+      > 9xyz  0  0  0
+      > 9xyz  0  0  1
+      > 9xyz  0  1  0
+      > 9xyz  1  0  0
   -
     id: nonbiological
     tag: 9xyz
@@ -200,6 +200,6 @@ test_choose_origins_for_atoms:
       radius_A: 1.01
       min_nearby_atoms: 3
     expected:
-      > 9xyz 0 0 2 1
+      > 9xyz 0 0 2
 
 

@@ -20,16 +20,22 @@ from io import StringIO
 
 def origins(params):
     io = StringIO(params)
+
+    head = io.readline()
+    n_cols = len(head.split())
+    if n_cols != 4:
+        raise IOError(f"expected origins data frame to have 4 columns, not {n_cols}\nfirst row: {head!r}")
+    io.seek(0)
+
     return pd.read_fwf(
             io,
             sep=' ',
-            names=['tag', 'x', 'y', 'z', 'weight'],
+            names=['tag', 'x', 'y', 'z'],
             dtype={
-                'tag': str,
+                'tag': 'category',
                 'x': float,
                 'y': float,
                 'z': float,
-                'weight': float,
             },
     )
 
@@ -42,8 +48,8 @@ def origin_params(params):
 
 def test_origin_coord():
     rows = [
-            dict(tag='a', x=1, y=2, z=3, weight=4),
-            dict(tag='b', x=5, y=6, z=7, weight=8),
+            dict(tag='a', x=1, y=2, z=3),
+            dict(tag='b', x=5, y=6, z=7),
     ]
     origins = pd.DataFrame(rows, index=[0, 2])
 
@@ -171,27 +177,9 @@ def test_filter_by_distance(origins, center, min_dist_A, max_dist_A, expected):
             min_dist_A=min_dist_A,
             max_dist_A=max_dist_A,
     )
+    print(actual.to_string())
+    print(expected.to_string())
     assert actual.to_dict('records') == expected.to_dict('records')
-
-def test_sample_origin():
-    # The weighted sampling algorithm is rigorously tested above.  Here we just 
-    # loosely make sure the results make sense.
-    rng = np.random.default_rng(0)
-
-    origins = pd.DataFrame([
-        {'tag': 'a', 'x': 0.0, 'y': 0.0, 'z': 0.0, 'weight': 1},
-        {'tag': 'b', 'x': 1.0, 'y': 1.0, 'z': 1.0, 'weight': 2},
-    ])
-    counts = Counter()
-
-    for i in range(1000):
-        origin, tag = apd.sample_origin(rng, origins)
-        debug(origin, tag)
-        counts[tuple(origin)] += 1
-        counts[tag] += 1
-
-    assert counts[1, 1, 1] > counts[0, 0, 0]
-    assert counts['b'] > counts['a']
 
 @pff.parametrize(
         schema=pff.cast(

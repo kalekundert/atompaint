@@ -43,25 +43,17 @@ class NeighborCountDataset(Dataset):
     def __init__(
             self,
             *,
-            origins,
+            origin_sampler,
             input_from_atoms,
             view_pair_params,
             low_seed,
             high_seed,
     ):
-        self.origins = origins
+        self.origin_sampler = origin_sampler
         self.input_from_atoms = input_from_atoms
         self.view_pair_params = view_pair_params
         self.low_seed = low_seed
         self.epoch_size = high_seed - low_seed
-
-        # Without this grouping, getting all the origins from a certain tag
-        # would require iterating over every origin, and would be a performance
-        # bottleneck.  Note that it's slightly faster to create a dictionary
-        # here, instead of relying on the `groupby` object.  But this approach
-        # uses half as much memory (see expt #224), and I think that's more
-        # likely to matter than the speed difference.
-        self.origins_by_tag = origins.groupby('tag')
 
     def __len__(self):
         return self.epoch_size
@@ -72,9 +64,7 @@ class NeighborCountDataset(Dataset):
         rng = np.random.default_rng(self.low_seed + i)
 
         while True:
-            origin_a, tag = sample_origin(rng, self.origins)
-            origins_b = self.origins_by_tag.get_group(tag)
-            atoms = atoms_from_tag(tag)
+            origin_a, origins_b, atoms = self.origin_sampler.sample(rng)
 
             try:
                 view_pair = sample_view_pair(
@@ -101,7 +91,7 @@ class NeighborCountDatasetForCnn(NeighborCountDataset):
     def __init__(
             self,
             *,
-            origins,
+            origin_sampler,
             img_params,
             max_dist_A,
             low_seed,
@@ -115,12 +105,65 @@ class NeighborCountDatasetForCnn(NeighborCountDataset):
         input_from_atoms = partial(image_from_atoms, img_params=img_params)
 
         super().__init__(
-                origins=origins,
+                origin_sampler=origin_sampler,
                 input_from_atoms=input_from_atoms,
                 view_pair_params=view_pair_params,
                 low_seed=low_seed,
                 high_seed=high_seed,
         )
+
+class PandasOriginSampler:
+    # Store metadata in a pandas data frame loaded into memory.
+
+    def __init__(self, origins):
+        self.origins = origins
+
+        # Without this grouping, getting all the origins from a certain tag
+        # would require iterating over every origin, and would be a performance
+        # bottleneck.  Note that it's slightly faster to create a dictionary
+        # here, instead of relying on the `groupby` object.  But this approach
+        # uses half as much memory (see expt #224), and I think that's more
+        # likely to matter than the speed difference.
+        self.origins_by_tag = origins.groupby('tag')
+
+    def sample(self, rng):
+        origin_a, tag = sample_origin(rng, self.origins)
+        origins_b = self.origins_by_tag.get_group(tag)
+        return origin_a, origins_b, atoms_from_tag(tag)
+
+class SqliteOriginSampler:
+    # Load metadata from an SQLite database
+    select_origin_a = 'SELECT tag_id, x, y, z FROM origins WHERE rowid=?'
+    select_tag = 'SELECT tag FROM tags WHERE id=?'
+    select_origins_b = 'SELECT x, y, z FROM origins WHERE tag_id=?'
+
+    def __init__(self, db_path):
+        import sqlite3
+        self.db = sqlite3.connect(db_path)
+
+        # Assume that no rows are ever deleted from the database.
+        count_origins = 'SELECT MAX(rowid) FROM origins'
+        self.num_origins = self.db.execute(count_origins).fetchone()[0]
+
+    def sample(self, rng):
+        cur = self.db.cursor()
+        i = rng.integers(self.num_origins + 1, dtype=int)
+
+        tag_id, *origin_a = cur.execute(self.select_origin_a, (i,)).fetchone()
+        tag, = cur.execute(self.select_tag, (tag_id,)).fetchone()
+        origins_b = cur.execute(self.select_origins_b, (tag_id,)).fetchall()
+
+        origin_a = np.array(origin_a)
+        origins_b = pd.DataFrame(origins_b, columns=['x', 'y', 'z'])
+
+        # Necessary because I reuse the `sample_origin()` function on 
+        # `origins_b`.  Really, `origins_b` should just be the coordinates and 
+        # not the tag, since we've already picked the tag at this point.  It 
+        # should probably also be a numpy array.
+        origins_b['tag'] = tag
+        atoms = atoms_from_tag(tag)
+
+        return origin_a, origins_b, atoms
 
 
 
@@ -169,7 +212,6 @@ class OriginsSchema(pa.DataFrameModel):
     x: Series[float]
     y: Series[float]
     z: Series[float]
-    weight: Series[float] = pa.Field(coerce=True)
 
 class NoOriginsToSample(Exception):
     pass
@@ -197,7 +239,9 @@ def choose_origins_for_tags(tags, origin_params):
 
         status['tags_loaded'].append(tag)
 
-    return pd.concat(dfs, ignore_index=True), status
+    df = pd.concat(dfs, ignore_index=True), status
+    df['tag'] = df['tag'].astype('category')
+    return df
 
 def choose_origins_for_atoms(tag, atoms, origin_params):
     atoms = filter_nonbiological_atoms(atoms)
@@ -208,15 +252,16 @@ def choose_origins_for_atoms(tag, atoms, origin_params):
 
     df = atoms[['x', 'y', 'z']].copy()
     df['tag'] = tag
-    df['weight'] = 1
     return df[n >= origin_params.min_nearby_atoms]
 
 def load_origins(path: Path):
     dfs = [
-            pd.read_parquet(p)
+            pd.read_parquet(p).drop(columns='weight', errors='ignore')
             for p in sorted(path.glob('origins.parquet*'))
     ]
-    return pd.concat(dfs, ignore_index=True)
+    df = pd.concat(dfs, ignore_index=True)
+    df['tag'] = df['tag'].astype('category')
+    return df
 
 def load_origin_params(path: Path):
     with open(path / 'params.json') as f:
@@ -349,10 +394,10 @@ def get_origin_coord(origins: Origins, i: int):
     # Important to select columns before `iloc`: This ensures that the
     # resulting array is of dtype float rather than object, because all of the
     # selected rows are float.
-    return origins[['x', 'y', 'z']].iloc[i].values
+    return origins[['x', 'y', 'z']].iloc[i].to_numpy()
 
 def get_origin_coords(origins: Origins):
-    return origins[['x', 'y', 'z']].values
+    return origins[['x', 'y', 'z']].to_numpy()
 
 def get_origin_tag(origins: Origins, i: int):
     return origins.iloc[i]['tag']
