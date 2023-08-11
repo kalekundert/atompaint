@@ -3,7 +3,7 @@ import os
 
 from .models import TransformationPredictor
 from .loss import CoordFrameMseLoss
-from .datasets import NeighborCountDatasetForCnn, load_origins
+from .datasets import NeighborCountDatasetForCnn, SqliteOriginSampler
 from atompaint.datasets.voxelize import ImageParams, Grid
 from lightning.pytorch.cli import LightningCLI
 from torch.utils.data import DataLoader
@@ -66,7 +66,7 @@ class DataModule(pl.LightningDataModule):
     ):
         super().__init__()
 
-        origins = load_origins(origins_path)
+        origin_sampler = SqliteOriginSampler(origins_path)
         img_params = ImageParams(
                 grid=Grid(
                     length_voxels=grid_length_voxels,
@@ -84,7 +84,7 @@ class DataModule(pl.LightningDataModule):
 
         def make_dataset(low_seed, high_seed):
             return NeighborCountDatasetForCnn(
-                    origins=origins,
+                    origin_sampler=origin_sampler,
                     img_params=img_params,
                     max_dist_A=max_dist_between_views_A,
                     low_seed=low_seed,
@@ -96,6 +96,10 @@ class DataModule(pl.LightningDataModule):
                     make_dataset(low_seed, high_seed),
                     batch_size=batch_size,
                     num_workers=num_workers,
+                    # Think this might help with data transfer speeds, but 
+                    # don't want to enable it until I've tested SQLite on its 
+                    # own.
+                    #pin_memory=True,
             )
 
         i = train_epoch_size
