@@ -8,7 +8,7 @@ import queue
 import sqlite3
 
 from lightning.pytorch.profilers import Profiler
-from psutil import Process
+from psutil import Process, NoSuchProcess
 from pathlib import Path
 from more_itertools import one
 
@@ -188,7 +188,7 @@ def query_memory_maps_for_pid(pid):
 
     # It's possible that the process in question will have exited in between 
     # now and when we got it's PID, so we have to handle this case gracefully.
-    except psutil.NoSuchProcess:
+    except NoSuchProcess:
         return pd.DataFrame()
 
 
