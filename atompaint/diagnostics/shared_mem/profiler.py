@@ -17,7 +17,7 @@ class SharedMemoryProfiler(Profiler):
             self,
             dirpath: Optional[Union[str, Path]] = None,
             filename: Optional[str] = None,
-            polling_interval_s: int = 10,
+            polling_interval_s: int = 1,
             aggregate_file_mmaps: bool = True,
     ):
         super().__init__(dirpath, filename)
