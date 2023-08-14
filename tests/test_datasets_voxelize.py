@@ -1,6 +1,7 @@
 import atompaint.datasets.voxelize as apdv
 import numpy as np
 import pandas as pd
+import pytest
 
 from io import StringIO
 from itertools import product
@@ -87,22 +88,12 @@ def assert_images_match(actual, expected):
 
 
 @pff.parametrize(
-        schema=pff.cast(radii=with_py.eval, expected=float),
+        schema=pff.cast(atoms=atoms, img_params=image_params, expected=image)
 )
-def test_get_element_radius(radii, element, expected):
-    assert apdv._get_element_radius(radii, element) == expected
+def test_image_from_atoms(atoms, img_params, expected):
+    img = apdv.image_from_atoms(atoms, img_params)
+    assert_images_match(img, expected)
 
-@pff.parametrize(
-        schema=pff.cast(radii=with_py.eval, expected=float),
-)
-def test_get_element_channel(channels, element, expected):
-    assert apdv._get_element_channel(channels, element, {}) == expected
-
-@pff.parametrize(
-        schema=pff.cast(grid=grid, voxels=indices, coords=coords),
-)
-def test_get_voxel_center_coords(grid, voxels, coords):
-    assert apdv._get_voxel_center_coords(grid, voxels) == approx(coords)
 
 def test_make_empty_image():
     img_params = apdv.ImageParams(
@@ -120,6 +111,13 @@ def test_make_empty_image():
             verbose=True,
     )
 
+@pff.parametrize(
+        schema=pff.cast(atoms=atoms, img_params=image_params, expected=atoms),
+)
+def test_discard_atoms_outside_image(atoms, img_params, expected):
+    actual = apdv._discard_atoms_outside_image(atoms, img_params)
+    pd.testing.assert_frame_equal(actual, expected)
+
 def test_make_atom():
     Row = namedtuple('Row', ['element', 'x', 'y', 'z', 'occupancy'])
     row = Row('C', 1, 2, 3, 0.8)
@@ -135,42 +133,26 @@ def test_make_atom():
     assert atom.channel == 0
     assert atom.occupancy == 0.8
 
-def test_make_cube():
-    # The meat of this function is implemented by `_get_voxel_center_coords()`, 
-    # which is tested above.  The test here is just a sanity check.
-    grid = apdv.Grid(
-            length_voxels=2,
-            resolution_A=0.5,
-            center_A=np.array([1, 2, 3]),
-    )
-    cube = apdv._make_cube(grid, np.array([0, 0, 1]))
-
-    assert cube.center_A == approx([0.75, 1.75, 3.25])
-    assert cube.length_A == approx(0.5)
+@pff.parametrize(
+        schema=pff.cast(radii=with_py.eval, expected=float),
+)
+def test_get_element_radius(radii, element, expected):
+    assert apdv._get_element_radius(radii, element) == expected
 
 @pff.parametrize(
-        schema=pff.cast(atoms=atoms, img_params=image_params, expected=atoms),
+        schema=pff.cast(radii=with_py.eval, expected=float),
 )
-def test_discard_atoms_outside_image(atoms, img_params, expected):
-    actual = apdv._discard_atoms_outside_image(atoms, img_params)
-    pd.testing.assert_frame_equal(actual, expected)
+def test_get_element_channel(channels, element, expected):
+    assert apdv._get_element_channel(channels, element, {}) == expected
+
 
 @pff.parametrize(
-        schema=pff.cast(grid=grid, voxels=indices, expected=indices),
+        schema=pff.cast(grid=grid, atom=atom, expected=image)
 )
-def test_discard_voxels_outside_image(grid, voxels, expected):
-    assert (apdv._discard_voxels_outside_image(grid, voxels) == expected).all()
-
-@pff.parametrize(
-        key=['test_get_voxel_center_coords', 'test_find_voxels_containing_coords'],
-        schema=pff.cast(grid=grid, coords=coords, voxels=indices),
-)
-def test_find_voxels_containing_coords(grid, coords, voxels):
-    np.testing.assert_array_equal(
-            apdv._find_voxels_containing_coords(grid, coords),
-            voxels,
-            verbose=True,
-    )
+def test_add_atom_to_image(grid, atom, expected):
+    img = np.zeros((atom.channel + 1, *grid.shape))
+    apdv._add_atom_to_image(img, grid, atom)
+    assert_images_match(img, expected)
 
 @pff.parametrize(
         schema=pff.cast(
@@ -183,7 +165,13 @@ def test_find_voxels_containing_coords(grid, coords, voxels):
         ),
 )
 def test_find_voxels_possibly_contacting_sphere(grid, sphere, expected):
-    voxels = apdv._find_voxels_possibly_contacting_sphere(grid, sphere)
+    voxels = apdv._find_voxels_possibly_contacting_sphere_jit(
+            grid.length_voxels,
+            grid.resolution_A,
+            grid.center_A,
+            sphere.center_A,
+            sphere.radius_A,
+    )
     voxel_tuples = {
             tuple(x)
             for x in voxels
@@ -204,23 +192,90 @@ def test_find_voxels_possibly_contacting_sphere(grid, sphere, expected):
     assert voxel_tuples >= expected_tuples
 
 @pff.parametrize(
+        key=['test_get_voxel_center_coords', 'test_find_voxels_containing_coords'],
+        schema=pff.cast(grid=grid, coords=coords, voxels=indices),
+)
+def test_find_voxels_containing_coords(grid, coords, voxels):
+    np.testing.assert_array_equal(
+            apdv._find_voxels_containing_coords_jit(
+                grid.length_voxels,
+                grid.resolution_A,
+                grid.center_A,
+                coords,
+            ),
+            voxels,
+            verbose=True,
+    )
+
+@pff.parametrize(
+        schema=pff.cast(grid=grid, voxels=indices, expected=indices),
+)
+def test_discard_voxels_outside_image(grid, voxels, expected):
+    np.testing.assert_array_equal(
+            apdv._discard_voxels_outside_image_jit(grid.length_voxels, voxels),
+            expected.reshape(-1, 3),
+    )
+
+@pff.parametrize(
+        schema=pff.cast(grid=grid, voxels=indices, coords=coords),
+)
+def test_get_voxel_center_coords(grid, voxels, coords):
+    actual = apdv._get_voxel_center_coords_jit(
+            grid.length_voxels,
+            grid.resolution_A,
+            grid.center_A,
+            voxels,
+    )
+    assert actual == approx(coords)
+
+def test_get_cube_verts():
+    # Be careful to use the "right" types, so we don't unnecessarily compile 
+    # another version of this function.
+    cube_center_A = coord('1 2 3')
+    cube_length_A = 1.0
+
+    verts = apdv._get_cube_verts_jit(cube_center_A, cube_length_A)
+
+    # The specific order of the vertices is important.
+    expected = np.array([
+        [0.5, 1.5, 2.5],
+        [1.5, 1.5, 2.5],
+        [1.5, 2.5, 2.5],
+        [0.5, 2.5, 2.5],
+        [0.5, 1.5, 3.5],
+        [1.5, 1.5, 3.5],
+        [1.5, 2.5, 3.5],
+        [0.5, 2.5, 3.5],
+    ])
+
+    assert verts == approx(expected)
+
+@pff.parametrize(
         schema=pff.cast(sphere=sphere, cube=cube, expected=with_math.eval)
 )
 def test_calc_sphere_cube_overlap_volume_A3(sphere, cube, expected):
-    assert apdv._calc_sphere_cube_overlap_volume_A3(sphere, cube) == \
+    verts = apdv._get_cube_verts_jit(cube.center_A, cube.length_A)
+    assert apdv._calc_sphere_cube_overlap_volume_A3(sphere, verts) == \
             approx(expected * sphere.volume_A3)
 
 @pff.parametrize(
-        schema=pff.cast(grid=grid, atom=atom, expected=image)
+        schema=pff.cast(
+            overlap_A3=with_math.eval,
+            radius_A=with_math.eval,
+            occupancy=with_math.eval,
+            expected=with_math.eval,
+        ),
 )
-def test_add_atom_to_image(grid, atom, expected):
-    img = np.zeros((atom.channel + 1, *grid.shape))
-    apdv._add_atom_to_image(img, grid, atom)
-    assert_images_match(img, expected)
+def test_calc_fraction_atom_in_voxel(overlap_A3, radius_A, occupancy, expected):
+    voxel = apdv._calc_fraction_atom_in_voxel_jit(
+            overlap_A3,
+            radius_A,
+            occupancy,
+    )
+    assert voxel == approx(expected)
 
-@pff.parametrize(
-        schema=pff.cast(atoms=atoms, img_params=image_params, expected=image)
-)
-def test_image_from_atoms(atoms, img_params, expected):
-    img = apdv.image_from_atoms(atoms, img_params)
-    assert_images_match(img, expected)
+def test_calc_sphere_volume_A3():
+    # https://www.omnicalculator.com/math/sphere-volume
+    assert apdv._calc_sphere_volume_A3_jit(1) == approx(4.189, abs=0.001)
+    assert apdv._calc_sphere_volume_A3_jit(2) == approx(33.51, abs=0.01)
+

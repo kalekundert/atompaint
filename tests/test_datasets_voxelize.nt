@@ -811,3 +811,25 @@ test_image_from_atoms:
       grid: 2
     expected:
       {}
+
+test_calc_fraction_atom_in_voxel:
+  -
+    overlap_A3: 4/3 * pi
+    radius_A: 1
+    occupancy: 1
+    expected: 1
+  -
+    overlap_A3: 4/3 * pi
+    radius_A: 2
+    occupancy: 1
+    expected: 1/8
+  -
+    overlap_A3: 4/3 * pi
+    radius_A: 1
+    occupancy: 1/2
+    expected: 1/2
+  -
+    overlap_A3: 4/3 * pi
+    radius_A: 2
+    occupancy: 1/2
+    expected: 1/16

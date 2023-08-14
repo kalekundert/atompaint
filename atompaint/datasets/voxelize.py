@@ -1,6 +1,7 @@
 import numpy as np
 import pandera as pa
 import overlap
+import numba
 import re
 
 from itertools import product
@@ -46,7 +47,7 @@ class Sphere:
 
     @cached_property
     def volume_A3(self):
-        return 4 / 3 * pi * self.radius_A**3
+        return _calc_sphere_volume_A3_jit(self.radius_A)
 
 @dataclass(frozen=True)
 class Cube:
@@ -101,89 +102,9 @@ def image_from_atoms(
     return img
         
 
-def _add_atom_to_image(img, grid, atom):
-    sphere = atom.sphere
-    for voxel in _find_voxels_possibly_contacting_sphere(grid, sphere):
-        i = atom.channel, *voxel
-        cube = _make_cube(grid, voxel)
-        overlap_A3 = _calc_sphere_cube_overlap_volume_A3(sphere, cube)
-        img[i] += atom.occupancy * overlap_A3 / sphere.volume_A3
-
-def _calc_sphere_cube_overlap_volume_A3(sphere, cube):
-    # Coordinates based on CGNS conventions, but really just copied from the 
-    # example provided by the `overlap` library:
-    # https://github.com/severinstrobl/overlap
-    # https://cgns.github.io/CGNS_docs_current/sids/conv.html#unst_hexa
-    x = cube.length_A / 2
-    origin_cube = np.array([
-        [-x, -x, -x],
-        [ x, -x, -x],
-        [ x,  x, -x],
-        [-x,  x, -x],
-        [-x, -x,  x],
-        [ x, -x,  x],
-        [ x,  x,  x],
-        [-x,  x,  x],
-    ])
-
-    cube_ = overlap.Hexahedron(origin_cube + cube.center_A)
-    sphere_ = overlap.Sphere(sphere.center_A, sphere.radius_A)
-
-    overlap_A3 = overlap.overlap(sphere_, cube_)
-
-    # I got this check from the source code of the `voxelize` package, which 
-    # also uses `overlap` to calculate sphere/cube intersection volumes.  The 
-    # claim is that, although `overlap` puts an emphasis on numerical 
-    # stability, it's still possible to get inaccurate results.  I haven't 
-    # experienced these errors myself yet, but I thought it would be prudent to 
-    # at least check for impossible values.
-    fudge_factor = 1 + 1e-6
-    if not (0 <= overlap_A3 <= sphere.volume_A3 * fudge_factor):
-        raise RuntimeError(f"numerical instability in overlap: overlap volume ({overlap_A3} Å³) exceeds sphere volume ({sphere.volume_A3} Å³)")
-
-    return overlap_A3
-    
-def _find_voxels_possibly_contacting_sphere(grid, sphere):
-    """
-    Return the indices of all voxels that could possibly contact the given 
-    sphere.
-
-    The voxels yielded by this function are not guaranteed to actually contact 
-    the sphere, so the user is still responsible for checking with a more 
-    accurate algorithm.  Voxels outside the borders of the image won't be 
-    returned.
-    """
-    probes = np.array([
-        [ 1,  0,  0],
-        [-1,  0,  0],
-        [ 0,  1,  0],
-        [ 0, -1,  0],
-        [ 0,  0,  1],
-        [ 0,  0, -1],
-    ])
-    probes = sphere.center_A + (probes * sphere.radius_A)
-    probe_hits = _find_voxels_containing_coords(grid, probes)
-
-    min_index = np.min(probe_hits, axis=0)
-    max_index = np.max(probe_hits, axis=0)
-
-    axes = [
-            np.arange(min_index[i], max_index[i] + 1)
-            for i in range(3)
-    ]
-    mesh = np.meshgrid(*axes)
-    voxels = np.vstack([x.flat for x in mesh]).T
-
-    return _discard_voxels_outside_image(grid, voxels)
-
-def _find_voxels_containing_coords(grid, coords_A):
-    # Consider each grid coordinate to be the center of the cell.
-    center_to_coords_A = coords_A - grid.center_A
-    origin_to_center_A = grid.resolution_A * (grid.length_voxels - 1) / 2
-    origin_to_coords_A = origin_to_center_A + center_to_coords_A
-
-    ijk = origin_to_coords_A / grid.resolution_A
-    return np.rint(ijk).astype(int)
+def _make_empty_image(img_params):
+    shape = len(img_params.channels), *img_params.grid.shape
+    return np.zeros(shape)
 
 def _discard_atoms_outside_image(atoms, img_params):
     grid = img_params.grid
@@ -200,22 +121,6 @@ def _discard_atoms_outside_image(atoms, img_params):
             (atoms['z'] > min_corner[2]) &
             (atoms['z'] < max_corner[2])
     ]
-
-def _discard_voxels_outside_image(grid, voxels):
-    not_too_low = voxels.min(axis=1) >= 0
-    not_too_high = voxels.max(axis=1) < grid.length_voxels
-    return voxels[not_too_low & not_too_high]
-
-def _get_voxel_center_coords(grid, voxels):
-    center_offset = (grid.length_voxels - 1) / 2
-    return grid.center_A + (voxels - center_offset) * grid.resolution_A
-
-def _make_empty_image(img_params):
-    shape = len(img_params.channels), *img_params.grid.shape
-    return np.zeros(shape)
-
-def _make_cube(grid, voxel):
-    return Cube(_get_voxel_center_coords(grid, voxel), grid.resolution_A)
 
 def _make_atom(row, img_params, channel_cache):
     return Atom(
@@ -258,4 +163,211 @@ def _get_element_channel(channels, element, cache):
             return i
 
     raise RuntimeError(f"element {element} didn't match any channels")
+
+# The following functions are performance-critical:
+
+jit = numba.njit(cache=True)
+
+def _add_atom_to_image(img, grid, atom):
+    sphere = atom.sphere
+
+    for voxel in _find_voxels_possibly_contacting_sphere_jit(
+            grid.length_voxels,
+            grid.resolution_A,
+            grid.center_A,
+            sphere.center_A,
+            sphere.radius_A,
+    ):
+        verts = _get_voxel_verts_jit(
+                grid.length_voxels,
+                grid.resolution_A,
+                grid.center_A,
+                voxel,
+        )
+        overlap_A3 = _calc_sphere_cube_overlap_volume_A3(sphere, verts)
+
+        i = atom.channel, *voxel
+        img[i] += _calc_fraction_atom_in_voxel_jit(
+                overlap_A3,
+                sphere.radius_A,
+                atom.occupancy,
+        )
+
+@jit
+def _find_voxels_possibly_contacting_sphere_jit(
+        grid_length_voxels,
+        grid_resolution_A,
+        grid_center_A,
+        sphere_center_A,
+        sphere_radius_A,
+):
+    """
+    Return the indices of all voxels that could possibly contact the given 
+    sphere.
+
+    The voxels yielded by this function are not guaranteed to actually contact 
+    the sphere, so the user is still responsible for checking with a more 
+    accurate algorithm.  Voxels outside the borders of the image won't be 
+    returned.
+    """
+    r = sphere_radius_A
+    probe_rel_coords_A = np.array([
+        [ r,  0,  0],
+        [-r,  0,  0],
+        [ 0,  r,  0],
+        [ 0, -r,  0],
+        [ 0,  0,  r],
+        [ 0,  0, -r],
+    ])
+    probe_coords_A = sphere_center_A + probe_rel_coords_A
+    probe_voxels = _find_voxels_containing_coords_jit(
+        grid_length_voxels,
+        grid_resolution_A,
+        grid_center_A,
+        probe_coords_A,
+    )
+
+    min_index = _min_jit(probe_voxels, 0)
+    max_index = _max_jit(probe_voxels, 0)
+
+    mesh = _meshgrid_jit(
+            np.arange(min_index[0], max_index[0] + 1),
+            np.arange(min_index[1], max_index[1] + 1),
+            np.arange(min_index[2], max_index[2] + 1),
+    )
+    layers = mesh[0].flatten(), mesh[1].flatten(), mesh[2].flatten()
+    voxels = np.vstack(layers).T
+
+    return _discard_voxels_outside_image_jit(grid_length_voxels, voxels)
+
+@jit
+def _find_voxels_containing_coords_jit(
+        grid_length_voxels,
+        grid_resolution_A,
+        grid_center_A,
+        coords_A,
+):
+    center_to_coords_A = coords_A - grid_center_A
+    origin_to_center_A = grid_resolution_A * (grid_length_voxels - 1) / 2
+    origin_to_coords_A = origin_to_center_A + center_to_coords_A
+
+    ijk = origin_to_coords_A / grid_resolution_A
+    return np.rint(ijk).astype(np.int8)
+
+@jit
+def _discard_voxels_outside_image_jit(
+        grid_length_voxels,
+        voxels,
+):
+    not_too_low = _min_jit(voxels, 1) >= 0
+    not_too_high = _max_jit(voxels, 1) < grid_length_voxels
+    return voxels[not_too_low & not_too_high]
+
+@jit
+def _get_voxel_verts_jit(
+        grid_length_voxels,
+        grid_resolution_A,
+        grid_center_A,
+        voxel,
+):
+    center_A = _get_voxel_center_coords_jit(
+        grid_length_voxels,
+        grid_resolution_A,
+        grid_center_A,
+        voxel,
+    )
+    return _get_cube_verts_jit(center_A, grid_resolution_A)
+
+@jit
+def _get_voxel_center_coords_jit(
+        grid_length_voxels,
+        grid_resolution_A,
+        grid_center_A,
+        voxels,
+):
+    center_offset = (grid_length_voxels - 1) / 2
+    return grid_center_A + (voxels - center_offset) * grid_resolution_A
+
+@jit
+def _get_cube_verts_jit(cube_center_A, cube_length_A):
+    # Coordinates based on CGNS conventions, but really just copied from the 
+    # example provided by the `overlap` library:
+    # https://github.com/severinstrobl/overlap
+    # https://cgns.github.io/CGNS_docs_current/sids/conv.html#unst_hexa
+    x = cube_length_A / 2
+    origin_verts = np.array([
+        [-x, -x, -x],
+        [ x, -x, -x],
+        [ x,  x, -x],
+        [-x,  x, -x],
+        [-x, -x,  x],
+        [ x, -x,  x],
+        [ x,  x,  x],
+        [-x,  x,  x],
+    ])
+    return origin_verts + cube_center_A
+    
+def _calc_sphere_cube_overlap_volume_A3(sphere, cube_verts):
+    cube = overlap.Hexahedron(cube_verts)
+    sphere_ = overlap.Sphere(sphere.center_A, sphere.radius_A)
+    overlap_A3 = overlap.overlap(sphere_, cube)
+
+    # I got this check from the source code of the `voxelize` package, which 
+    # also uses `overlap` to calculate sphere/cube intersection volumes.  The 
+    # claim is that, although `overlap` puts an emphasis on numerical 
+    # stability, it's still possible to get inaccurate results.  I haven't 
+    # experienced these errors myself yet, but I thought it would be prudent to 
+    # at least check for impossible values.
+    fudge_factor = 1 + 1e-6
+    if not (0 <= overlap_A3 <= sphere.volume_A3 * fudge_factor):
+        raise RuntimeError(f"numerical instability in overlap: overlap volume ({overlap_A3} Å³) exceeds sphere volume ({sphere.volume_A3} Å³)")
+
+    return overlap_A3
+
+@jit
+def _calc_fraction_atom_in_voxel_jit(overlap_A3, radius_A, occupancy):
+    return occupancy * overlap_A3 / _calc_sphere_volume_A3_jit(radius_A)
+
+@jit
+def _calc_sphere_volume_A3_jit(radius_A):
+    return 4/3 * pi * radius_A**3
+
+# Reimplemented versions of numpy functions that numba doesn't support.
+
+@jit
+def _apply_along_axis_jit(func1d, axis, arr):
+  # https://github.com/numba/numba/issues/1269
+  assert arr.ndim == 2
+  assert axis in [0, 1]
+  if axis == 0:
+    result = np.empty(arr.shape[1], dtype=arr.dtype)
+    for i in range(len(result)):
+      result[i] = func1d(arr[:, i])
+  else:
+    result = np.empty(arr.shape[0], dtype=arr.dtype)
+    for i in range(len(result)):
+      result[i] = func1d(arr[i, :])
+  return result
+
+@jit
+def _min_jit(array, axis):
+  return _apply_along_axis_jit(np.min, axis, array)
+
+@jit
+def _max_jit(array, axis):
+  return _apply_along_axis_jit(np.max, axis, array)
+
+@jit
+def _meshgrid_jit(x, y, z):
+    # https://stackoverflow.com/questions/70613681/numba-compatible-numpy-meshgrid
+    xx = np.empty(shape=(z.size, y.size, x.size), dtype=x.dtype)
+    yy = np.empty(shape=(z.size, y.size, x.size), dtype=y.dtype)
+    zz = np.empty(shape=(z.size, y.size, x.size), dtype=z.dtype)
+    for i in range(z.size):
+        for j in range(y.size):
+            for k in range(x.size):
+                xx[i,j,k] = x[k]
+                yy[i,j,k] = y[j]
+                zz[i,j,k] = z[i]
+    return xx, yy, zz
 
