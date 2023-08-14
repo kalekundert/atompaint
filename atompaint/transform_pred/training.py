@@ -3,7 +3,7 @@ import os
 
 from .models import TransformationPredictor
 from .loss import CoordFrameMseLoss
-from .datasets import NeighborCountDatasetForCnn, SqliteOriginSampler
+from .datasets import NeighborCountDatasetForCnn, SqliteOriginSampler, ParquetOriginSampler
 from atompaint.datasets.voxelize import ImageParams, Grid
 from lightning.pytorch.cli import LightningCLI
 from torch.utils.data import DataLoader
@@ -66,7 +66,8 @@ class DataModule(pl.LightningDataModule):
     ):
         super().__init__()
 
-        origin_sampler = SqliteOriginSampler(origins_path)
+        self.origin_sampler = SqliteOriginSampler(origins_path)
+        #self.origin_sampler = ParquetOriginSampler(origins_path)
         img_params = ImageParams(
                 grid=Grid(
                     length_voxels=grid_length_voxels,
@@ -84,7 +85,7 @@ class DataModule(pl.LightningDataModule):
 
         def make_dataset(low_seed, high_seed):
             return NeighborCountDatasetForCnn(
-                    origin_sampler=origin_sampler,
+                    origin_sampler=self.origin_sampler,
                     img_params=img_params,
                     max_dist_A=max_dist_between_views_A,
                     low_seed=low_seed,
@@ -99,7 +100,7 @@ class DataModule(pl.LightningDataModule):
                     # Think this might help with data transfer speeds, but 
                     # don't want to enable it until I've tested SQLite on its 
                     # own.
-                    #pin_memory=True,
+                    pin_memory=True,
             )
 
         i = train_epoch_size
@@ -123,6 +124,10 @@ class DataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         return self._test_dataloader
+
+    def teardown(self, stage):
+        self.origin_sampler.teardown()
+
 
 def main():
     from lightning.pytorch.profilers import PyTorchProfiler

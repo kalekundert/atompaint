@@ -112,11 +112,11 @@ class NeighborCountDatasetForCnn(NeighborCountDataset):
                 high_seed=high_seed,
         )
 
-class PandasOriginSampler:
+class ParquetOriginSampler:
     # Store metadata in a pandas data frame loaded into memory.
 
-    def __init__(self, origins):
-        self.origins = origins
+    def __init__(self, origins_path):
+        self.origins = load_origins(origins_path)
 
         # Without this grouping, getting all the origins from a certain tag
         # would require iterating over every origin, and would be a performance
@@ -124,12 +124,15 @@ class PandasOriginSampler:
         # here, instead of relying on the `groupby` object.  But this approach
         # uses half as much memory (see expt #224), and I think that's more
         # likely to matter than the speed difference.
-        self.origins_by_tag = origins.groupby('tag')
+        self.origins_by_tag = self.origins.groupby('tag')
 
     def sample(self, rng):
         origin_a, tag = sample_origin(rng, self.origins)
         origins_b = self.origins_by_tag.get_group(tag)
         return origin_a, origins_b, atoms_from_tag(tag)
+
+    def teardown(self):
+        pass
 
 class SqliteOriginSampler:
     # Load metadata from an SQLite database
@@ -137,8 +140,19 @@ class SqliteOriginSampler:
     select_tag = 'SELECT tag FROM tags WHERE id=?'
     select_origins_b = 'SELECT x, y, z FROM origins WHERE tag_id=?'
 
-    def __init__(self, db_path):
-        import sqlite3
+    def __init__(self, origins_path, copy_to_tmp=True):
+        import sqlite3, tempfile, shutil
+
+        db_path = origins_path / 'origins.db'
+
+        if copy_to_tmp:
+            self.tmp = tempfile.NamedTemporaryFile(
+                    prefix='atompaint_',
+                    delete=True,
+            )
+            shutil.copy2(db_path, self.tmp.name)
+            db_path = self.tmp.name
+
         self.db = sqlite3.connect(db_path)
 
         # Assume that no rows are ever deleted from the database.
@@ -164,6 +178,12 @@ class SqliteOriginSampler:
         atoms = atoms_from_tag(tag)
 
         return origin_a, origins_b, atoms
+
+    def teardown(self):
+        try:
+            self.tmp.close()
+        except AttributeError:
+            pass
 
 
 
