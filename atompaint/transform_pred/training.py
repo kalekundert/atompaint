@@ -1,3 +1,4 @@
+import torch
 import lightning.pytorch as pl
 import os
 
@@ -28,17 +29,17 @@ class PredictorModule(pl.LightningModule):
 
     def training_step(self, batch, _):
         loss = self.forward(batch)
-        self.log('train_loss', loss)
+        self.log('val_loss', loss, sync_dist=True)
         return loss
 
     def validation_step(self, batch, _):
         loss = self.forward(batch)
-        self.log('val_loss', loss)
+        self.log('val_loss', loss, sync_dist=True)
         return loss
 
     def test_step(self, batch, _):
         loss = self.forward(batch)
-        self.log('test_loss', loss)
+        self.log('test_loss', loss, sync_dist=True)
         return loss
 
 class DataModule(pl.LightningDataModule):
@@ -133,13 +134,21 @@ def main():
     from lightning.pytorch.profilers import PyTorchProfiler
     from atompaint.diagnostics.shared_mem.profiler import SharedMemoryProfiler
 
+    # Lightning recommends setting this to either 'medium' or 'high' (as
+    # opposed to 'highest', which is the default) when training on GPUs with
+    # support for the necessary acceleration.  I don't think there's a good way
+    # of knowing a priori what the best setting should be; so I chose the
+    # 'high' setting as a compromise to be optimized later.
+    
+    torch.set_float32_matmul_precision('high')
+
     LightningCLI(
             PredictorModule, DataModule,
             save_config_kwargs=dict(
                 overwrite=True,
             ),
             trainer_defaults=dict( 
-                profiler=SharedMemoryProfiler(),
+                #profiler=SharedMemoryProfiler(),
                 #profiler=PyTorchProfiler(profile_memory=True),
             ),
     )
