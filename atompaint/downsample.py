@@ -95,9 +95,16 @@ class IcosahedralCnn(EquivariantCnn):
                 # Order of layers taken from this Stack Overflow post:
                 # https://stackoverflow.com/questions/39691902/ordering-of-batch-normalization-and-dropout
                 layer_factory=lambda i, in_type, out_type: [
-                    # Might be better to use `R3IcoConv`, but at the moment it 
-                    # seems to be broken.  See QUVA-Lab/escnn#52.
-                    R3Conv(in_type, out_type, get_scalar(conv_field_of_view, i)),
+
+                    # No need for bias: subsequent batch-norm step will 
+                    # recenter everything on 0 anyways.
+                    # https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html#disable-bias-for-convolutions-directly-followed-by-a-batch-norm
+                    R3Conv(
+                        in_type,
+                        out_type,
+                        kernel_size=get_scalar(conv_field_of_view, i),
+                        bias=False,
+                    ),
                     IIDBatchNorm3d(out_type),
                     ReLU(out_type),
                     PointwiseMaxPoolAntialiased3D(
@@ -131,11 +138,14 @@ class FourierCnn(EquivariantCnn):
         self.irreps = irreps
 
         def layer_factory(i, in_type, out_type):
+            use_batch_norm = i < len(channels) - 2
+
             yield R3Conv(
                     in_type,
                     out_type,
                     kernel_size=get_scalar(conv_field_of_view, i),
                     stride=get_scalar(conv_stride, i),
+                    bias=not use_batch_norm,  # See IcosahedralCnn for rationale.
             )
 
             # Batch normalization gets noisy when the combined number of 
@@ -145,7 +155,7 @@ class FourierCnn(EquivariantCnn):
             # to skip the batch normalization step for the last layer of the 
             # CNN, where the spatial dimensions will usually be 1x1x1.
 
-            if i < len(channels) - 2:
+            if use_batch_norm:
                 yield IIDBatchNorm3d(out_type)
 
             yield FourierPointwise(
