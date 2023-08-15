@@ -16,15 +16,16 @@ classifiers = [
 dependencies = [
   'docopt',
   'escnn',
-  'lie-learn @ git+https://github.com/AMLab-Amsterdam/lie_learn@07469085ac0fd4550fd26ff61cb10bb1e92cead1',
   'lightning',
   'more_itertools',
   'nestedtext',
+  'numba',
   'numpy',
   'overlap',
   'pandas',
   'pandera',
   'pdbecif',
+  'pymixbox',
   'scipy',
   'torch',
   'tqdm',
@@ -33,6 +34,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   'pytest',
+  'pytest_tmp_files',
   'parametrize_from_file',
   'hypothesis',
 ]

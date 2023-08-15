@@ -6,7 +6,7 @@ import parametrize_from_file as pff
 from escnn.nn import FieldType
 from escnn.gspaces import no_base_space
 from escnn.group import SO3
-from pytorch3d.transforms import axis_angle_to_matrix
+from scipy.spatial.transform import Rotation
 from math import radians
 from utils import *
 
@@ -26,9 +26,10 @@ def se3_matrix(params):
 
     if 'axis' in params:
         rot_axis = vector_from_str(params.pop('axis'))
-        rot_angle = float(params.pop('degrees_ccw'))
-        rot_vector = radians(rot_angle) * rot_axis / torch.norm(rot_axis)
-        rot_matrix = axis_angle_to_matrix(rot_vector)
+        rot_angle_deg = float(params.pop('degrees_ccw'))
+        rot_vector_rad = radians(rot_angle_deg) * rot_axis / torch.norm(rot_axis)
+        rot_matrix = Rotation.from_rotvec(rot_vector_rad).as_matrix()
+        rot_matrix = torch.from_numpy(rot_matrix)
     else:
         rot_matrix = torch.eye(3)
 

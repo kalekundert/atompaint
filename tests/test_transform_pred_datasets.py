@@ -8,7 +8,6 @@ from test_datasets_atoms import atoms
 from test_datasets_coords import coord, frame, matrix
 from scipy.stats import multinomial, ks_1samp
 from scipy.spatial.distance import mahalanobis
-from scipy.spatial.transform import Rotation
 from atompaint.datasets.atoms import transform_atom_coords
 from atompaint.datasets.coords import transform_coords
 from atompaint.datasets.voxelize import ImageParams, Grid

@@ -1,3 +1,3 @@
 [submodule "atompaint/vendored/PDB_ligand_quality_composite_score"]
 	path = atompaint/vendored/PDB_ligand_quality_composite_score
-	url = git@github.com:rcsb/PDB_ligand_quality_composite_score.git
+	url = https://github.com/rcsb/PDB_ligand_quality_composite_score.git

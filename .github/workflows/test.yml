@@ -22,11 +22,23 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
         run: |
-          python -m pip install --upgrade pip
+          git submodule update --init
+          # The `lie_learn` dependency is really finicky to install:
+          # - The `wheel` package must be separately installed first
+          # - The `cython` package must be the most recent version prior to 
+          #   version 3.0.  Newer version assume python3 syntax by default, 
+          #   which breaks `lie_learn`, and older versions might give errors 
+          #   relating to missing headers in recent versions of python.
+          # - You have to install `lie_learn` fro GitHub, not from PyPI.  The 
+          #   version on PyPI doesn't have one of the modules that ESCNN needs.
+          # - `lie_learn` also has to be installed before the rest of 
+          #   `atompaint`.  I don't understand why.
+          python -m pip install --upgrade pip wheel 'cython<3.0'
+          python -m pip install git+https://github.com/AMLab-Amsterdam/lie_learn
           python -m pip install -e .[test] coverage[toml]
       - name: Run test suite
         run: |
-          python -m coverage run -m pytest
+          python -m coverage run -m pytest tests/
       - name: Store coverage data
         uses: actions/upload-artifact@v3
         with:

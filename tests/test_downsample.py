@@ -1,7 +1,7 @@
 import atompaint.downsample as apd
 import torch
 
-from escnn.nn.testing import check_equivariance
+from atompaint.vendored.escnn_nn_testing import check_equivariance
 from utils import *
 
 # For these tests, we construct the inputs very carefully to ensure that 
