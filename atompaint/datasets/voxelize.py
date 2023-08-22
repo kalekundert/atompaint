@@ -278,6 +278,14 @@ def _get_voxel_verts_jit(
     )
     return _get_cube_verts_jit(center_A, grid_resolution_A)
 
+def _get_voxel_center_coords(grid, voxels):
+    return _get_voxel_center_coords_jit(
+            grid.length_voxels,
+            grid.resolution_A,
+            grid.center_A,
+            voxels,
+    )
+
 @jit
 def _get_voxel_center_coords_jit(
         grid_length_voxels,
