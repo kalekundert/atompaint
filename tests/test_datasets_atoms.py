@@ -54,7 +54,7 @@ def atoms(params):
         df.rename_axis(None, inplace=True)
 
     if 'monomer' not in df:
-        df['monomer'] = 'UNK'
+        df['monomer'] = 'ALA'
     if 'element' not in df:
         df['element'] = 'C'
     if 'occupancy' not in df:

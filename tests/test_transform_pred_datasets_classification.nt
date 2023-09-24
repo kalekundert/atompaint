@@ -1,0 +1,116 @@
+test_filter_view_slots:
+  -
+    id: one-slot
+    frame_ia:
+      origin: 0 0 0
+      rot_vec_rad: 0 0 0
+    view_slots:
+      pattern: cube-faces
+      radius: 1
+      origins:
+        >  0  0  1
+        >  0  0 -1
+        >  1  0  0
+        >  0  1  0
+        > -1  0  0
+        >  0 -1  0
+    origin_params:
+      radius_A: 0.5
+      min_nearby_atoms: 1
+    atoms_i:
+      >  x  y  z
+      >  1  0  0
+    expected: [2]
+  -
+    id: two-slots
+    frame_ia:
+      origin: 0 0 0
+      rot_vec_rad: 0 0 0
+    view_slots:
+      pattern: cube-faces
+      radius: 1
+      origins:
+        >  0  0  1
+        >  0  0 -1
+        >  1  0  0
+        >  0  1  0
+        > -1  0  0
+        >  0 -1  0
+    origin_params:
+      radius_A: 0.5
+      min_nearby_atoms: 1
+    atoms_i:
+      >  x  y  z
+      >  1  0  0
+      >  0  1  0
+    expected: [2, 3]
+  -
+    id: rotate-frame
+    frame_ia:
+      origin: 0 0 0
+      rot_vec_rad: 0 0 pi/2
+    view_slots:
+      pattern: cube-faces
+      radius: 1
+      origins:
+        >  0  0  1
+        >  0  0 -1
+        >  1  0  0
+        >  0  1  0
+        > -1  0  0
+        >  0 -1  0
+    origin_params:
+      radius_A: 0.5
+      min_nearby_atoms: 1
+    atoms_i:
+      >  x  y  z
+      >  1  0  0
+    expected: [5]
+  -
+    id: move-frame
+    frame_ia:
+      origin: 1 0 0
+      rot_vec_rad: 0 0 0
+    view_slots:
+      pattern: cube-faces
+      radius: 1
+      origins:
+        >  0  0  1
+        >  0  0 -1
+        >  1  0  0
+        >  0  1  0
+        > -1  0  0
+        >  0 -1  0
+    origin_params:
+      radius_A: 0.5
+      min_nearby_atoms: 1
+    atoms_i:
+      >  x  y  z
+      >  2  0  0
+    expected: [2]
+  -
+    id: min-nearby-atoms
+    frame_ia:
+      origin: 0 0 0
+      rot_vec_rad: 0 0 0
+    view_slots:
+      pattern: cube-faces
+      radius: 1
+      origins:
+        >  0  0  1
+        >  0  0 -1
+        >  1  0  0
+        >  0  1  0
+        > -1  0  0
+        >  0 -1  0
+    origin_params:
+      radius_A: 0.5
+      min_nearby_atoms: 2
+    atoms_i:
+      >  x  y  z
+      >  1  0  0
+      >  1  0  0
+      >  0  1  0
+    expected: [2]
+
+

@@ -42,7 +42,7 @@ def parse_pisces_path(path: Path):
     """
     i = '[0-9]+'
     f = fr'{i}\.{i}'
-    pisces_pattern = fr"""
+    pisces_pattern = fr'''
             cullpdb_
             pc(?P<max_percent_identity>{f})_
             res(?P<min_resolution_A>{f})-(?P<max_resolution_A>{f})_
@@ -52,7 +52,7 @@ def parse_pisces_path(path: Path):
             (?P<experiments>[a-zA-Z+]+)_
             d(?P<year>\d{{4}})_(?P<month>\d{{2}})_(?P<day>\d{{2}})_
             chains(?P<num_chains>{i})
-    """
+    '''
     if m := re.match(pisces_pattern, path.name, re.VERBOSE):
         return m.groupdict()
     else:

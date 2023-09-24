@@ -55,8 +55,8 @@ def make_coord_frame(origin: Coord, rot_vec_rad: Coord) -> Frame:
             The origin of frame Y, expressed in frame X coordinates.  For 
             example, consider a coordinate frame located at (1,2,3).  If you 
             transform (0,0,0) into this frame, you'll get (-1,-2,-3) because 
-            (0,0,0) is the origin of X in frame Y is the opposite of what was 
-            specified.  If you transform (1,2,3), you'll get (0,0,0).
+            (0,0,0) is the origin of X in frame Y, which is the opposite of 
+            what was specified.  If you transform (1,2,3), you'll get (0,0,0).
 
         rot_vec_rad:
             The orientation of frame Y, as seen from X.  The direction of the 
@@ -79,7 +79,7 @@ def make_coord_frame(origin: Coord, rot_vec_rad: Coord) -> Frame:
 
     frame_yx = np.eye(4)
     frame_yx[0:3, 0:3] = rot
-    frame_yx[0:3,   3] = origin
+    frame_yx[0:3,   3] = origin.ravel()
 
     # We need to invert the matrix, because the arguments are both from the 
     # perspective of frame X, but the actual components of the matrix have to 
@@ -99,6 +99,14 @@ def invert_coord_frame(frame: Frame) -> Frame:
     inv[0:3,   3] = -r_inv @ frame[0:3, 3]
 
     return inv
+
+def get_origin(frame: Frame):
+    frame = invert_coord_frame(frame)
+    return frame[0:3, 3]
+
+def get_rotation_matrix(frame: Frame):
+    frame = invert_coord_frame(frame)
+    return frame[0:3, 0:3]
 
 
 def transform_coords(coords_x: Coords4, frame_xy: Frame) -> Coords4:

@@ -1,0 +1,290 @@
+# The `choose_origins_for_atoms` and `filter_origin_coords` tests are pretty 
+# redundant.  Neither function implements much logic, so the tests end up 
+# mostly re-testing logic that tested elsewhere.  That said, I'm keeping the 
+# tests since they're written anyways, and it's good to know that the main API 
+# entry points work.  Maybe in the future I can consolidate.
+
+test_choose_origins_for_atoms:
+  -
+    id: 1d
+    tag: 9xyz
+    atoms:
+      > resn x y z
+      > ALA  0 0 0
+      > ALA  0 0 1
+      > ALA  0 0 2
+    origin_params:
+      radius_A: 1.01
+      min_nearby_atoms: 3
+    expected:
+      > 9xyz 0 0 1
+  -
+    id: 3d
+    tag: 9xyz
+    atoms:
+      > resn  x  y  z
+      > ALA  -1 -1 -1
+      > ALA  -1 -1  0
+      > ALA  -1 -1  1
+      > ALA  -1  0 -1
+      > ALA  -1  0  0
+      > ALA  -1  0  1
+      > ALA  -1  1 -1
+      > ALA  -1  1  0
+      > ALA  -1  1  1
+      > ALA   0 -1 -1
+      > ALA   0 -1  0
+      > ALA   0 -1  1
+      > ALA   0  0 -1
+      > ALA   0  0  0
+      > ALA   0  0  1
+      > ALA   0  1 -1
+      > ALA   0  1  0
+      > ALA   0  1  1
+      > ALA   1 -1 -1
+      > ALA   1 -1  0
+      > ALA   1 -1  1
+      > ALA   1  0 -1
+      > ALA   1  0  0
+      > ALA   1  0  1
+      > ALA   1  1 -1
+      > ALA   1  1  0
+      > ALA   1  1  1
+    origin_params:
+      radius_A: 1.01
+      min_nearby_atoms: 6
+    expected:
+      > 9xyz -1  0  0
+      > 9xyz  0 -1  0
+      > 9xyz  0  0 -1
+      > 9xyz  0  0  0
+      > 9xyz  0  0  1
+      > 9xyz  0  1  0
+      > 9xyz  1  0  0
+  -
+    id: nonbiological
+    tag: 9xyz
+    atoms:
+      > resn x y z
+      > HOH  0 0 0
+      > ALA  0 0 1
+      > ALA  0 0 2
+      > ALA  0 0 3
+    origin_params:
+      radius_A: 1.01
+      min_nearby_atoms: 3
+    expected:
+      > 9xyz 0 0 2
+
+test_filter_origin_coords:
+  -
+    id: min-nearby-atoms-1
+    coords_A:
+      > 0 0 0
+      > 0 0 1
+      > 0 0 2
+    origin_params:
+      radius_A: 0.49
+      min_nearby_atoms: 1
+    atoms:
+      > x y z
+      > 0 0 1
+      > 0 0 2
+      > 0 0 2.01
+    expected:
+      > 0 0 1
+      > 0 0 2
+  -
+    id: min-nearby-atoms-2
+    coords_A:
+      > 0 0 0
+      > 0 0 1
+      > 0 0 2
+    origin_params:
+      radius_A: 0.49
+      min_nearby_atoms: 2
+    atoms:
+      > x y z
+      > 0 0 1
+      > 0 0 2
+      > 0 0 2.01
+    expected:
+      > 0 0 2
+  -
+    id: radius
+    coords_A:
+      > 0 0 0.99
+      > 0 0 1.01
+    origin_params:
+      radius_A: 1
+      min_nearby_atoms: 1
+    atoms:
+      > x y z
+      > 0 0 2
+    expected:
+      > 0 0 1.01
+  -
+    id: occupancy
+    coords_A:
+      > 0 0 0 
+      > 0 0 1
+    origin_params:
+      radius_A: 0.49
+      min_nearby_atoms: 1
+    atoms:
+      > x y z    q
+      > 0 0 0 0.99
+      > 0 0 1 1.00
+    expected:
+      > 0 0 1
+  -
+    id: nonbiological
+    coords_A:
+      > 0 0 0
+      > 0 0 1
+    origin_params:
+      radius_A: 0.49
+      min_nearby_atoms: 1
+    atoms:
+      > resn x y z
+      > HOH  0 0 0
+      > ALA  0 0 1
+    expected:
+      > 0 0 1
+
+test_count_nearby_atoms:
+  -
+    id: 1d-0.99
+    coords_A:
+      > 0 0 -3
+      > 0 0 -2
+      > 0 0 -1
+      > 0 0  0
+      > 0 0  1
+      > 0 0  2
+      > 0 0  3
+    atoms:
+      > x y  z
+      > 0 0 -1
+      > 0 0  0
+      > 0 0  1
+    radius_A: 0.99
+    expected:
+      > 0 0 1 1 1 0 0
+  -
+    id: 1d-1.01
+    coords_A:
+      > 0 0 -3
+      > 0 0 -2
+      > 0 0 -1
+      > 0 0  0
+      > 0 0  1
+      > 0 0  2
+      > 0 0  3
+    atoms:
+      > C 0 0 -1
+      > C 0 0  0
+      > C 0 0  1
+    radius_A: 1.01
+    expected:
+      > 0 1 2 3 2 1 0
+  -
+    id: 3d-0.99
+    atoms:
+      >  x  y  z
+      > -1 -1 -1
+      > -1 -1  0
+      > -1 -1  1
+      > -1  0 -1
+      > -1  0  0
+      > -1  0  1
+      > -1  1 -1
+      > -1  1  0
+      > -1  1  1
+      >  0 -1 -1
+      >  0 -1  0
+      >  0 -1  1
+      >  0  0 -1
+      >  0  0  0
+      >  0  0  1
+      >  0  1 -1
+      >  0  1  0
+      >  0  1  1
+      >  1 -1 -1
+      >  1 -1  0
+      >  1 -1  1
+      >  1  0 -1
+      >  1  0  0
+      >  1  0  1
+      >  1  1 -1
+      >  1  1  0
+      >  1  1  1
+    radius_A: 0.99
+    expected:
+      > 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  -
+    id: 3d-1.01
+    atoms:
+      >  x  y  z
+      > -1 -1 -1
+      > -1 -1  0
+      > -1 -1  1
+      > -1  0 -1
+      > -1  0  0
+      > -1  0  1
+      > -1  1 -1
+      > -1  1  0
+      > -1  1  1
+      >  0 -1 -1
+      >  0 -1  0
+      >  0 -1  1
+      >  0  0 -1
+      >  0  0  0
+      >  0  0  1
+      >  0  1 -1
+      >  0  1  0
+      >  0  1  1
+      >  1 -1 -1
+      >  1 -1  0
+      >  1 -1  1
+      >  1  0 -1
+      >  1  0  0
+      >  1  0  1
+      >  1  1 -1
+      >  1  1  0
+      >  1  1  1
+    radius_A: 1.01
+    expected:
+      > 4 5 4 5 6 5 4 5 4 5 6 5 6 7 6 5 6 5 4 5 4 5 6 5 4 5 4
+  -
+    id: occupancy
+    atoms:
+      > x y z q
+      > 0 0 0 0.4
+      > 0 0 1 0.6
+      > 0 0 2 1.0
+    radius_A: 1.01
+    expected:
+      > 1.0 2.0 1.6
+  -
+    id: one-coord-hit
+    coords_A:
+      > 0 0 0
+    atoms:
+      > x y  z
+      > 0 0 -1
+      > 0 0  0
+      > 0 0  1
+    radius_A: 0.99
+    expected: 1
+  -
+    id: one-coord-miss
+    coords_A:
+      > 0 0 0
+    atoms:
+      > x y  z
+      > 0 0 -1
+      > 0 0  1
+    radius_A: 0.99
+    expected: 0
+

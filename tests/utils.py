@@ -1,4 +1,3 @@
-import atompaint as ap
 import parametrize_from_file as pff
 
 from pytest import approx

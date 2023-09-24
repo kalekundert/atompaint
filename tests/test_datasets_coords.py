@@ -6,6 +6,7 @@ from io import StringIO
 from pytest import approx
 from hypothesis import given, settings, example
 from hypothesis.extra.numpy import arrays
+from scipy.spatial.transform import Rotation
 from math import pi
 from utils import *
 
@@ -25,7 +26,9 @@ def coord(params):
     return matrix(params)
 
 def coords(params):
-    return matrix(params)
+    coords = matrix(params)
+    coords.shape = (1, *coords.shape)[-2:]
+    return coords
 
 def float_bounds(max=100):
     return dict(
@@ -76,10 +79,19 @@ def test_transform_coords(frame_xy, coords_x, expected_y):
         ),
 )
 def test_make_coord_frame(origin, rot_vec_rad, coords_x, expected_y):
-    # It's not enough to test that the 16 numbers making up the matrix, I need 
-    # to test that it transforms things in the way it should.
+    # It's not enough to test the 16 numbers making up the matrix, I need to 
+    # test that it transforms things in the way it should.
     frame_xy = apdc.make_coord_frame(origin, rot_vec_rad)
     test_transform_coords(frame_xy, coords_x, expected_y)
+
+    np.testing.assert_allclose(
+            apdc.get_origin(frame_xy),
+            origin,
+    )
+    np.testing.assert_allclose(
+            apdc.get_rotation_matrix(frame_xy),
+            Rotation.from_rotvec(rot_vec_rad).as_matrix(),
+    )
 
 @settings(deadline=None)
 @given(

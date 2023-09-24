@@ -60,7 +60,6 @@ from atompaint.datasets.atoms import load_pisces, parse_pisces_path
 from pathlib import Path
 from more_itertools import nth, chunked
 from dataclasses import asdict
-from functools import partial
 from math import ceil
 from tqdm import tqdm
 

@@ -49,11 +49,13 @@ def atom(params):
     )
 
 def index(params):
-    return indices(params)
+    return np.array([int(x) for x in params.split()])
 
 def indices(params):
     io = StringIO(params)
-    return np.loadtxt(io, dtype=int)
+    indices = np.loadtxt(io, dtype=int)
+    indices.shape = (1, *indices.shape)[-2:]
+    return indices
 
 def image_params(params):
     grid_ = grid(params['grid'])
