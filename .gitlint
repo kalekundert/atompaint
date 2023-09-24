@@ -1,0 +1,12 @@
+[general]
+ignore=title-must-not-contain-word,body-is-missing
+contrib=contrib-title-conventional-commits
+regex-style-search=True
+
+[ignore-by-title]
+regex=^Merge branch.*
+ignore=contrib-title-conventional-commits
+
+[contrib-title-conventional-commits]
+types=chore,docs,feat,fix,perf,refactor,style,test,wip
+
