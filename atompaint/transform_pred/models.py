@@ -1,73 +1,61 @@
 import torch
 
-from escnn.nn import *
-from escnn.group import Group, Representation, SO3
+from .fourier import QuotientInverseFourier
+from atompaint.downsample import EquivariantCnn, FourierCnn
+from atompaint.type_hints import LayerFactory
+
+from escnn.nn import (
+        SequentialModule, Linear, FourierPointwise, FieldType, GeometricTensor,
+        tensor_directsum,
+)
+from escnn.group import GroupElement
 from escnn.gspaces import no_base_space
 from itertools import pairwise
-from more_itertools import unique_everseen as unique
-
-from atompaint.vendored.pytorch3d import rotation_6d_to_matrix
-from atompaint.downsample import EquivariantCnn, IcosahedralCnn, FourierCnn
-from atompaint.type_hints import LayerFactory
+from typing import Any
 
 class TransformationPredictor(torch.nn.Module):
     """
     Predict the relative orientation of two atom clouds.
+
+    The main purpose of this class is to being easy to configure via Lightning.  
+    That means accepting a limited set of constructor arguments that are all 
+    relatively simple types.
     """
 
     def __init__(
-            self,
-            # The model doesn't really have to be an equivariant CNN, it just 
-            # needs to be a module with *out_repr* and *out_channels* 
-            # attributes.  For now, though, this is the only class that meets 
-            # these requirements.
-            encoder: EquivariantCnn,
-            mlp_layer_factory: LayerFactory,
-            mlp_channels: list[int] | int = 1,
+            self, *,
+            frequencies: int = 2,
+            conv_channels: list[int] = [1, 1],
+            conv_field_of_view: int | list[int] = 4,
+            conv_stride: int | list[int] = 2,
+            mlp_channels: int | list[int] = [1],
+
     ):
-        """
-        Arguments:
-            model:
-                A torch module that creates an embedding given a macromolecular 
-                atom cloud, and defines the following attributes:
-
-                - ``gspace``
-                - ``out_repr``
-                - ``out_channel``
-
-            mlp_channels:
-                How many channels should be in the hidden layers of the MLP.  
-                Unlike the `CoordFrameMlp` argument of the same name, this 
-                argument only specifies the hidden layers and does not include 
-                the input layer.  The reason is that the input layer can be 
-                inferred from the encoder.
-
-                If an integer is given (instead of a list of integers), this is 
-                interpreted as the number of hidden layers to create.  Each 
-                hidden layer will be the same size as the input layer.
-        """
         super().__init__()
 
-        # If the user specified the number of layers to use, but not the number 
-        # of channels to use in each layer, make each hidden layer the same 
-        # size as the input layer.  This is a rule-of-thumb based on the idea 
-        # that the ideal hidden layer size is probably between the input and 
-        # output sizes, and that it's better to err on the side of making the 
-        # hidden layer too big.  A too-big hidden layer will be less efficient 
-        # to train, but still capable of learning the necessary features.  A 
-        # too-small hidden layer may not give good performance.
-        #
-        # https://stackoverflow.com/questions/10565868/multi-layer-perceptron-mlp-architecture-criteria-for-choosing-number-of-hidde
+        self.encoder = FourierCnn(
+                channels=conv_channels,
+                conv_field_of_view=conv_field_of_view,
+                conv_stride=conv_stride,
+                frequencies=frequencies,
+        )
+        self.mlp = ViewClassifierMlp(
+                so3_fields = _parse_mlp_channels(self.encoder, mlp_channels),
+                layer_factory = lambda in_type, out_type: [
+                    Linear(in_type, out_type),
+                    FourierPointwise(
+                        out_type.gspace,
+                        len(out_type) // len(self.encoder.out_repr),
+                        self.encoder.irreps,
+                        # Default grid parameters from SO(3) example:
+                        type='thomson_cube', N=4,
+                    ),
+                ],
+                fourier_irreps = self.encoder.irreps,
 
-        if isinstance(mlp_channels, int):
-            mlp_channels = [2 * encoder.out_channels] * mlp_channels
-
-        self.encoder = encoder
-        self.mlp = CoordFrameMlp(
-                group = encoder.gspace.fibergroup,
-                in_reprs = encoder.out_repr,
-                channels = [2 * encoder.out_channels] + mlp_channels,
-                layer_factory = mlp_layer_factory,
+                # This has to be the same as the grid used to construct the 
+                # dataset.  For now, I've just hard-coded the 'cube' grid.
+                fourier_grid = self.encoder.gspace.fibergroup.sphere_grid('cube'),
         )
 
     def forward(self, input: torch.Tensor):
@@ -88,153 +76,66 @@ class TransformationPredictor(torch.nn.Module):
                 H, and D will always be equal.
 
         Returns:
-            A tensor of dimension (B, 4, 4) containing an SE(3) transformation 
-            matrix for each member of the minibatch.
-        """
-        b = input.shape[0]
+            A tensor of dimension (B, V) that describes the probability that 
+            each minibatch member belongs to each possible view.  The values in 
+            this tensor are unnormalized logits, suitable to be passed to the 
+            softmax or cross-entropy loss functions.
 
+            B: minibatch size
+            V: number of possible views
+        """
         latent_0 = self.encoder(input[:,0])
         latent_1 = self.encoder(input[:,1])
-        latent = flatten_base_space(tensor_directsum([latent_0, latent_1]))
-
+        latent = _flatten_base_space(tensor_directsum([latent_0, latent_1]))
         return self.mlp(latent)
 
     @property
     def in_type(self):
         return self.encoder.fields[0]
 
-class IcosahedralTransformationPredictor(TransformationPredictor):
+class ViewClassifierMlp(torch.nn.Module):
 
     def __init__(
             self, *,
-            conv_channels: list[int] = [1, 1],
-            conv_field_of_view: int | list[int] = 4,
-            pool_field_of_view: int | list[int] = 2,
-            mlp_channels: int | list[int] = [1],
-    ):
-        super().__init__(
-                IcosahedralCnn(
-                    channels=conv_channels,
-                    conv_field_of_view=conv_field_of_view,
-                    pool_field_of_view=pool_field_of_view,
-                ),
-                mlp_channels=mlp_channels,
-                mlp_layer_factory=lambda in_type, out_type: [
-                    Linear(in_type, out_type),
-                    ReLU(out_type),
-                ],
-        )
-
-class FourierTransformationPredictor(TransformationPredictor):
-
-    def __init__(
-            self, *,
-            conv_channels: list[int] = [1, 1],
-            conv_field_of_view: int | list[int] = 4,
-            conv_stride: int | list[int] = 2,
-            mlp_channels: int | list[int] = [1],
-            frequencies: int = 2,
-    ):
-        super().__init__(
-                cnn := FourierCnn(
-                    channels=conv_channels,
-                    conv_field_of_view=conv_field_of_view,
-                    conv_stride=conv_stride,
-                    frequencies=frequencies,
-                ),
-                mlp_channels=mlp_channels,
-                mlp_layer_factory=lambda in_type, out_type: [
-                    Linear(in_type, out_type),
-                    FourierPointwise(
-                        out_type.gspace,
-                        len(out_type) // len(cnn.out_repr),
-                        cnn.irreps,
-
-                        # Default grid parameters from SO(3) example:
-                        type='thomson_cube', N=4,
-                    ),
-                ],
-        )
-
-class CoordFrameMlp(torch.nn.Module):
-    """
-    Predict the relative orientation of two macromolecular embeddings.
-
-    This class is not meant to be used directly.  Rather, it's meant to be 
-    constructed internally by classes like `IcosahedralTransformationPredictor` 
-    and `FourierTransformationPredictor`.
-    """
-
-    def __init__(
-            self,
-            group: Group,
-            in_reprs: list[Representation],
-            channels: list[int],
+            so3_fields: list[FieldType],
             layer_factory: LayerFactory,
+            fourier_irreps: [Any],
+            fourier_grid: list[GroupElement],
     ):
-        """
-        Arguments:
-            in_reprs:
-                The representations that act on the input fibers.
-
-            channels:
-                The number of channels to use for each layer in the network.  
-                The number of elements in this list determines the number of 
-                layers to create.  The first value in this list describes the 
-                input layer, and so its value (along with *in_reprs*) must 
-                describe the dimensions of the geometric tensors that will be 
-                fed into this module.
-
-            layer_factory:
-                A function that returns the equivariant modules that should be 
-                used to move between adjacent layers.  Typically, this would 
-                include `escnn.nn.Linear`, a nonlinearity, and optionally batch 
-                normalization or dropout, in some order.  This function will be 
-                called once for each pair of layers, except for the last.  A 
-                single linear module will be used to move between the last pair 
-                of layers.
-        """
         super().__init__()
 
-        gspace = no_base_space(group)
-
-        in_fields = [
-                FieldType(gspace, n * in_reprs)
-                for n in channels
-        ]
-
-        # The structure of the output fiber is an internal implementation 
-        # detail.  This model only guarantees to return an SE(3) transformation 
-        # matrix with certain equivariance/invariance properties; it is free to 
-        # parametrize that matrix however it likes.
-        #
-        # The predicted translation should be 3D and equivariant w.r.t.  
-        # rotation of the input.  The standard representation of SO(3)---3D 
-        # rotation matrices---meets both of these requirements.  The predicted 
-        # rotation should be invariant w.r.t. rotation of the input, which 
-        # calls for the trivial representation.  Only 3 dimensions are 
-        # necessary to specify a rotation, but [Zhou2020] shows that rotations 
-        # are easier to learn when encoded using 6 dimensions, so that's the 
-        # approach I'm taking.
-
-        if isinstance(group, SO3):
-            standard_repr = group.standard_representation()
-        else:
-            standard_repr = group.standard_representation
-
-        out_field = FieldType(
-                gspace,
-                [standard_repr] + 6 * [gspace.trivial_repr],
-        )
-
         layers = []
-
-        for in_type, out_type in pairwise(in_fields):
+        for in_type, out_type in pairwise(so3_fields):
             layers += list(layer_factory(in_type, out_type))
 
+        # This quotient-space inverse Fourier transform approach requires that 
+        # the group being used have SO(2) as a subgroup.  I think that 
+        # effectively means that the group has to be SO(3).  It definitely 
+        # can't be the icosahedral group.  That's too bad, because the 
+        # icosahedral group is compatible with pointwise nonlinearities, and I 
+        # was hoping to see how well those worked.  I could always get around 
+        # this requirement by doing a non-quotient-space Fourier transform, but 
+        # that would add a lot of complexity relating to working out which 
+        # basis vectors to ignore.
+
+        so2_z = False, -1
+        self.inv_fourier_s2 = QuotientInverseFourier(
+                so3_fields[-1].gspace,
+                subgroup_id=so2_z,
+                channels=1,
+                irreps=fourier_irreps,
+                grid=fourier_grid,
+        )
+
         layers += [
-                Linear(in_fields[-1], out_field),
+                Linear(so3_fields[-1], self.inv_fourier_s2.in_type),
         ]
+
+        # I thought about including an additional ReLU after converting to 
+        # real-space, but this just throws away information and doesn't add any 
+        # expressiveness:
+        #
+        # https://stats.stackexchange.com/questions/163695/non-linearity-before-final-softmax-layer-in-a-convolutional-neural-network
 
         self.mlp = SequentialModule(*layers)
 
@@ -254,19 +155,60 @@ class CoordFrameMlp(torch.nn.Module):
                 must not have any spatial dimensions remaining.
         """
         assert input.tensor.dim() == 2
-        b, _ = input.shape
+        x_fourier = self.mlp(input)
+        x_real = self.inv_fourier_s2.forward(x_fourier)
 
-        xyz_rot = self.mlp(input).tensor
+        # There's only one channel, so get rid of that dimension.
+        b, c, g = x_real.shape
+        assert c == 1
+        return x_real.reshape((b, g))
 
-        frame = torch.zeros((b,4,4), device=xyz_rot.device)
-        frame[:, 0:3, 0:3] = rotation_6d_to_matrix(xyz_rot[:, 3:])
-        frame[:, 0:3,   3] = xyz_rot[:, :3]
-        frame[:,   3,   3] = 1
+def _parse_mlp_channels(
+        encoder: EquivariantCnn,
+        mlp_channels: list[int] | int,
+) -> list[FieldType]:
+    """
+    Make input and output field types for each layer of the MLP, from 
+    parameters that are convenient for end-users to specify.
 
-        return frame
+    Arguments:
+        encoder:
+            The model used to make a single latent-space encoding of the input.  
+            Note that the actual input to the MLP will be the concatenated 
+            input from two such encoders.
 
+        mlp_channels:
+            If a list of integers is given, it is interpreted as the number of 
+            channels that should be in each hidden layer of the MLP.  
 
-def flatten_base_space(geom_tensor):
+            If an integer is given instead, it is interpreted as the number of 
+            hidden layers to create, and each hidden layer will be the same 
+            size as the input layer. This is a rule-of-thumb based on the idea 
+            that (i) the ideal hidden layer size is probably between the input 
+            and output sizes and (ii) it's better to err on the side of making 
+            the hidden layer too big.  A too-big hidden layer will be less 
+            efficient to train, but still capable of learning the necessary 
+            features.  A too-small hidden layer may not give good performance.
+    
+            https://stackoverflow.com/questions/10565868/multi-layer-perceptron-mlp-architecture-criteria-for-choosing-number-of-hidde
+
+    Returns:
+        A list of field types.  An input field type, which is corresponds 
+        exactly to the concatenated outputs from the two encoders, is prepended 
+        to the field types specified by the *mlp_channels* argument.
+    """
+    if isinstance(mlp_channels, int):
+        mlp_channels = [2 * encoder.out_channels] * mlp_channels
+
+    gspace = no_base_space(encoder.gspace.fibergroup)
+    mlp_fields = [
+            FieldType(gspace, n * encoder.out_repr)
+            for n in [2 * encoder.out_channels] + mlp_channels
+    ]
+
+    return mlp_fields
+
+def _flatten_base_space(geom_tensor):
     # TODO: I'd like to contribute this as a method of the `GeometricTensor` 
     # class.
     tensor = geom_tensor.tensor

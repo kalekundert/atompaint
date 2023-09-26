@@ -3,10 +3,13 @@ import lightning.pytorch as pl
 import os
 
 from .models import TransformationPredictor
-from .loss import CoordFrameMseLoss
-from .datasets import NeighborCountDatasetForCnn, SqliteOriginSampler, ParquetOriginSampler
+from .datasets.origins import SqliteOriginSampler
+from .datasets.classification import (
+        CnnViewIndexDataStream, make_cube_face_frames_ab,
+)
 from atompaint.datasets.voxelize import ImageParams, Grid
 from lightning.pytorch.cli import LightningCLI
+from torch import nn
 from torch.utils.data import DataLoader
 from pathlib import Path
 from typing import Optional
@@ -17,10 +20,10 @@ from typing import Optional
 
 class PredictorModule(pl.LightningModule):
 
-    def __init__(self, model: TransformationPredictor, loss_radius_A: float):
+    def __init__(self, model: TransformationPredictor):
         super().__init__()
         self.model = model
-        self.loss = CoordFrameMseLoss(loss_radius_A)
+        self.loss = nn.CrossEntropyLoss()
 
     def forward(self, batch):
         x, y = batch
@@ -56,7 +59,8 @@ class DataModule(pl.LightningDataModule):
             element_radii_A: Optional[float],
 
             # View pair parameters
-            max_dist_between_views_A: float,
+            view_padding_A: float,
+            reuse_count: int,
 
             # Data loader parameters
             batch_size: int,
@@ -68,7 +72,6 @@ class DataModule(pl.LightningDataModule):
         super().__init__()
 
         self.origin_sampler = SqliteOriginSampler(origins_path)
-        #self.origin_sampler = ParquetOriginSampler(origins_path)
         img_params = ImageParams(
                 grid=Grid(
                     length_voxels=grid_length_voxels,
@@ -76,6 +79,10 @@ class DataModule(pl.LightningDataModule):
                 ),
                 channels=element_channels,
                 element_radii_A=element_radii_A,
+        )
+        view_frames_ab = make_cube_face_frames_ab(
+                img_params.grid.length_A,
+                view_padding_A,
         )
 
         if num_workers is None:
@@ -85,12 +92,13 @@ class DataModule(pl.LightningDataModule):
                 num_workers = os.cpu_count()
 
         def make_dataset(low_seed, high_seed):
-            return NeighborCountDatasetForCnn(
+            return CnnViewIndexDataStream(
+                    frames_ab=view_frames_ab,
                     origin_sampler=self.origin_sampler,
                     img_params=img_params,
-                    max_dist_A=max_dist_between_views_A,
                     low_seed=low_seed,
                     high_seed=high_seed,
+                    reuse_count=reuse_count,
             )
 
         def make_dataloader(low_seed, high_seed):
@@ -98,9 +106,6 @@ class DataModule(pl.LightningDataModule):
                     make_dataset(low_seed, high_seed),
                     batch_size=batch_size,
                     num_workers=num_workers,
-                    # Think this might help with data transfer speeds, but 
-                    # don't want to enable it until I've tested SQLite on its 
-                    # own.
                     pin_memory=True,
             )
 

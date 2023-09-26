@@ -1,5 +1,5 @@
-from typing import TypeAlias, Callable
-from collections.abc import Iterable
+from typing import TypeAlias
+from collections.abc import Iterable, Callable
 from escnn.nn import FieldType, EquivariantModule
 
 LayerFactory: TypeAlias = Callable[

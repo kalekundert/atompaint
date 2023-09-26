@@ -83,7 +83,7 @@ class IcosahedralCnn(EquivariantCnn):
     def __init__(
             self, *,
             channels: list[int] = [1, 1],
-            conv_field_of_view: int | list[int] = 4,
+            conv_field_of_view: int | list[int] = 3,
             pool_field_of_view: int | list[int] = 2,
     ):
         gspace = icoOnR3()
@@ -122,7 +122,7 @@ class FourierCnn(EquivariantCnn):
     def __init__(
             self, *,
             channels: list[int] = [1, 1],
-            conv_field_of_view: int | list[int] = 4,
+            conv_field_of_view: int | list[int] = 3,
             conv_stride: int | list[int] = 2,
             frequencies: int = 2,
     ):
@@ -140,12 +140,19 @@ class FourierCnn(EquivariantCnn):
         def layer_factory(i, in_type, out_type):
             use_batch_norm = i < len(channels) - 2
 
+            # Order of layers taken from this Stack Overflow post:
+            # https://stackoverflow.com/questions/39691902/ordering-of-batch-normalization-and-dropout
+
             yield R3Conv(
                     in_type,
                     out_type,
                     kernel_size=get_scalar(conv_field_of_view, i),
                     stride=get_scalar(conv_stride, i),
-                    bias=not use_batch_norm,  # See IcosahedralCnn for rationale.
+
+                    # Batch-normalization will recenter everything on 0, so 
+                    # there's no point having a bias just before that.
+                    # https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html#disable-bias-for-convolutions-directly-followed-by-a-batch-norm
+                    bias=not use_batch_norm,
             )
 
             # Batch normalization gets noisy when the combined number of 
@@ -154,7 +161,6 @@ class FourierCnn(EquivariantCnn):
             # impossible to calculate variance.  With this in mind, I decided 
             # to skip the batch normalization step for the last layer of the 
             # CNN, where the spatial dimensions will usually be 1x1x1.
-
             if use_batch_norm:
                 yield IIDBatchNorm3d(out_type)
 
@@ -163,8 +169,8 @@ class FourierCnn(EquivariantCnn):
                     # the output field type, we're implicitly assuming that 
                     # there is only a single representation per channel.  This 
                     # happens to be true here, because we define *latent_repr* 
-                    # as such, but in general this is not something we can rely 
-                    # on.
+                    # as such just below, but this is a fragile construction in 
+                    # general.
                     gspace, len(out_type), irreps,
 
                     # Default grid parameters from SO(3) example:

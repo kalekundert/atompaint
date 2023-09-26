@@ -1,27 +1,29 @@
 import numpy as np
+import torch
 
-from .origins import filter_origin_coords
-from atompaint.datasets.coords import Frame, make_coord_frame, get_origin
+from .origins import select_origin_filtering_atoms, filter_origin_coords
+from .utils import sample_origin, sample_coord_frame
+from atompaint.datasets.atoms import transform_atom_coords
+from atompaint.datasets.coords import make_coord_frame, get_origin
+from atompaint.datasets.voxelize import image_from_atoms
 from torch.utils.data import IterableDataset
-from escnn.group import octa_group, ico_group
-from scipy.linalg import null_space
-from more_itertools import all_equal
-from dataclasses import dataclass
-from typing import Any
+from escnn.group import GroupElement, so3_group
+from more_itertools import take
+from functools import partial
 
-class ViewSlotDataStream(IterableDataset):
+class ViewIndexDataStream(IterableDataset):
 
     def __init__(
             self,
             *,
-            view_slots,
+            frames_ab,
             input_from_atoms,
             origin_sampler,
             low_seed,
             high_seed,
             reuse_count,
     ):
-        self.view_slots = view_slots
+        self.frames_ab = frames_ab
         self.input_from_atoms = input_from_atoms
         self.origin_sampler = origin_sampler
         self.low_seed = low_seed
@@ -30,16 +32,22 @@ class ViewSlotDataStream(IterableDataset):
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
-        seeds = _get_seeds(self.seed_offest, self.epoch_size, worker_info)
+        seeds = _get_seeds(self.low_seed, self.epoch_size // self.reuse_count, worker_info)
 
         for seed in seeds:
             rng = np.random.default_rng(seed)
 
             _, origins, atoms_i = self.origin_sampler.sample(rng)
-            view_pairs = _sample_view_pairs(rng, origins, self.view_slots, atoms_i)
+            view_pairs = _sample_view_pairs(
+                    rng,
+                    origins,
+                    self.frames_ab,
+                    self.origin_sampler.params,
+                    atoms_i,
+            )
 
-            for frame_ia, slot_b in take(view_pairs, self.reuse_count):
-                frame_ab = self.view_slots.frames_ab[slot_b]
+            for frame_ia, b in take(self.reuse_count, view_pairs):
+                frame_ab = self.frames_ab[b]
 
                 atoms_a = transform_atom_coords(atoms_i, frame_ia)
                 atoms_b = transform_atom_coords(atoms_a, frame_ab)
@@ -48,118 +56,95 @@ class ViewSlotDataStream(IterableDataset):
                 input_b = self.input_from_atoms(atoms_b)
                 input_ab = np.stack([input_a, input_b])
 
-                yield torch.from_numpy(input_ab).float(), slot_b,
+                yield torch.from_numpy(input_ab).float(), b
 
-@dataclass
-class ViewSlots:
-    representation: Any
-    frames_ab: list[Frame]
+class CnnViewIndexDataStream(ViewIndexDataStream):
 
-def make_view_slots(pattern: str, radius: float):
-    # This algorithm doesn't work with "cube edges", because multiple slot 
-    # indices end up corresponding to the same position.  Presumably this is 
-    # because the indices in question differ by a rotation that doesn't affect 
-    # a single point.  That said, it is possible to create 12 pairs of group 
-    # elements that each give different positions, and even though the "cube 
-    # edges" representation doesn't do this, the "ico edges" representation 
-    # does (with 30 edges instead of 12).  I'm suspicious that something is 
-    # wrong here, but for now I'm going to assume that this algorithm still 
-    # works for cube faces, vertices, etc.
+    def __init__(
+            self, *,
+            frames_ab,
+            img_params,
+            origin_sampler, 
+            low_seed,
+            high_seed,
+            reuse_count,
+    ):
+        input_from_atoms = partial(image_from_atoms, img_params=img_params)
 
-    if pattern == 'cube-faces':
-        group = octa_group()
-        r = group.cube_faces_representation
+        super().__init__(
+                frames_ab=frames_ab,
+                origin_sampler=origin_sampler,
+                input_from_atoms=input_from_atoms,
+                low_seed=low_seed,
+                high_seed=high_seed,
+                reuse_count=reuse_count,
+        )
 
-    if pattern == 'cube-vertices':
-        group = octa_group()
-        r = group.cube_vertices_representation
+def make_cube_face_frames_ab(length_A, padding_A):
+    """
+    Calculate 6 view frames: one for each face of a cube.
+    """
+    so3 = so3_group()
+    grid = so3.sphere_grid('cube')
+    return make_view_frames_ab(grid, length_A + padding_A)
 
-    if pattern == 'ico-faces':
-        group = ico_group()
-        r = group.ico_faces_representation
+def make_view_frames_ab(grid: list[GroupElement], radius_A: float):
+    """
+    Use `SO3.sphere_grid()` to get the grid.  The normal `SO3.grid()` method 
+    attempts to cover all of $SO(3)$, which means that when end up projecting 
+    onto $S^2$, there will be a bunch of duplicate points.
+    """
+    frames_ab = np.zeros((len(grid), 4, 4))
+    z = np.array([0, 0, radius_A])
 
-    if pattern == 'ico-vertices':
-        group = ico_group()
-        r = group.ico_vertices_representation
+    for i, g in enumerate(grid):
+        R = g.to('MAT')
+        origin = R @ z
+        frames_ab[i] = make_coord_frame(origin, np.zeros(3))
 
-    if pattern == 'ico-edges':
-        group = ico_group()
-        r = group.ico_edges_representation
+    return frames_ab
 
-    degenerates = {}
 
-    for g in group.elements:
-        e = np.zeros(r.size)
-        e[0] = 1
-        i = np.argmax(r(g) @ e)
+def _sample_view_pairs(rng, origins, frames_ab, origin_params, atoms_i):
+    filtering_atoms_i = select_origin_filtering_atoms(atoms_i)
 
-        degenerates.setdefault(i, []).append(g)
-
-    # In order to work out a position for each of the indices determined above, 
-    # we need to find a vector that is transformed in the same way by each 
-    # group element with the same index.  By transforming this vector, we get a 
-    # position that represents the whole index.
-    # 
-    # Consider two rotation matrices with the same index, A and B.  We seek a 
-    # vector x that satisfies the following equation:
-    # 
-    #   Ax = Bx;  (A-B)x = 0
-    #
-    # In other words, we want the null space of (A-B).  For the rotation 
-    # matrices we're working with, the null space should always be 1D.  In 
-    # general, there may be more than two matrices associated with each index, 
-    # but it doesn't matter which two are used.  It also turns out that every 
-    # index will have the same null space, so we just calculate it once up 
-    # front (on index 0, arbitrarily).
-
-    g1, g2 = degenerates[0][0:2]
-    A = group.standard_representation(g1)
-    B = group.standard_representation(g2)
-    x = null_space(A - B)
-
-    assert x.shape == (3, 1)
-
-    # This vector is guaranteed to be normalized, but it's sign is arbitrary. 
-    # Forcing the vector to point mostly in the positive direction makes the 
-    # result deterministic.
-    sign = 1 if np.dot(x.ravel(), np.ones(3)) >= 0 else -1
-    x *= sign * radius
-
-    frames_ab = np.zeros((r.size, 4, 4))
-    for i, elements in degenerates.items():
-        R = group.standard_representation(elements[0])
-        frames_ab[i] = make_coord_frame(R @ x, np.zeros(3))
-
-    return ViewSlots(
-            representation=r,
-            frames_ab=frames_ab,
-    )
-
-def _sample_view_pairs(rng, origins, view_slots, atoms):
-    relevant_atoms = find_relevant_atoms(atoms)
+    num_origins = 0
+    num_pairs = 0
 
     while True:
-        origin_a = sample_origin(rng, origins)
+        origin_a, _ = sample_origin(rng, origins)
         frame_ia = sample_coord_frame(rng, origin_a)
-        slots_b = _filter_view_slots(frame_ia, view_slots, relevant_atoms)
+        ok_indices = _filter_views(
+                frame_ia,
+                frames_ab,
+                origin_params,
+                filtering_atoms_i,
+        )
+        num_origins += 1
 
-        if slots_b:
-            yield frame_ia, rng.choice(slots_b)
+        if ok_indices:
+            yield frame_ia, rng.choice(ok_indices)
+            num_pairs += 1
 
-def _filter_view_slots(frame_ia, view_slots, origin_params, relevant_atoms_i):
-    slots_b = []
+        # Bail out if it's too hard to find valid view pairs in this structure.  
+        # I should add some sort of logging to see how often this happens.
+        if num_pairs / num_origins < 0.1:
+            return
 
-    for slot_b, frame_ab in enumerate(view_slots.frames_ab):
+def _filter_views(frame_ia, frames_ab, origin_params, filtering_atoms_i):
+    ok_indices = []
+
+    for b, frame_ab in enumerate(frames_ab):
         frame_ib = frame_ab @ frame_ia
         origin_i = get_origin(frame_ib)
 
-        hits = filter_origin_coords(origin_i, origin_params, relevant_atoms_i)
-        if hits.size:
-            slots_b.append(slot_b)
+        ok_coords = filter_origin_coords(origin_i, origin_params, filtering_atoms_i)
+        if ok_coords.size:
+            ok_indices.append(b)
 
-    return slots_b
+    return ok_indices
 
-def _get_seeds(seed_offset, epoch_size, worker_info):
+def _get_seeds(low_seed, epoch_size, worker_info):
     if worker_info is None:
         worker_id = 0
         num_workers = 1
@@ -168,8 +153,8 @@ def _get_seeds(seed_offset, epoch_size, worker_info):
         num_workers = worker_info.num_workers
 
     return range(
-            seed_offset + worker_id,
-            seed_offset + epoch_size,
+            low_seed + worker_id,
+            low_seed + epoch_size,
             num_workers,
     )
             

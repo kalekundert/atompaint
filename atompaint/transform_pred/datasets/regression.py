@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import pandas as pd
 
-from .origins import Origins, get_origin_coords
+from .origins import get_origin_coords
 from .utils import sample_origin, sample_coord_frame, NoOriginsToSample
 from atompaint.datasets.coords import invert_coord_frame
 from atompaint.datasets.atoms import transform_atom_coords

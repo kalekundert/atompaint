@@ -3,7 +3,6 @@ Utilities relating to the "atoms" data structure, which is just a data frame
 with the following columns: element, x, y, z.
 """
 
-import numpy as np
 import pandas as pd
 import pandera as pa
 import importlib.resources
@@ -14,7 +13,7 @@ from .coords import (
         Coord, Coords3, Coords4, Frame, transform_coords, homogenize_coords,
 )
 from more_itertools import one
-from functools import cache, cached_property
+from functools import cache
 from pathlib import Path
 
 from typing import TypeAlias, Optional

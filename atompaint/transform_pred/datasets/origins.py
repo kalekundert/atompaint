@@ -152,6 +152,7 @@ class ParquetOriginSampler:
 
     def __init__(self, origins_path):
         self.origins = load_origins(origins_path)
+        _, self.params = load_origin_params(origins_path)
 
         # Without this grouping, getting all the origins from a certain tag
         # would require iterating over every origin, and would be a performance
@@ -162,6 +163,7 @@ class ParquetOriginSampler:
         self.origins_by_tag = self.origins.groupby('tag')
 
     def sample(self, rng):
+        from .utils import sample_origin
         origin_a, tag = sample_origin(rng, self.origins)
         origins_b = self.origins_by_tag.get_group(tag)
         return origin_a, origins_b, atoms_from_tag(tag)
@@ -198,6 +200,8 @@ class SqliteOriginSampler:
         # Assume that no rows are ever deleted from the database.
         count_origins = 'SELECT MAX(rowid) FROM origins'
         self.num_origins = self.db.execute(count_origins).fetchone()[0]
+
+        _, self.params = load_origin_params(origins_path)
 
     def sample(self, rng):
         cur = self.db.cursor()

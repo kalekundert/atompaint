@@ -1,10 +1,8 @@
 import numpy as np
-import pandera as pa
 import overlap
 import numba
 import re
 
-from itertools import product
 from functools import cached_property
 from dataclasses import dataclass, field
 from numbers import Real

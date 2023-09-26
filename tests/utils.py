@@ -1,7 +1,7 @@
 import parametrize_from_file as pff
 
 from pytest import approx
-from escnn.group import Octahedral
+from escnn.group import octa_group
 from functools import cache
 
 with_py = pff.Namespace()
@@ -14,7 +14,7 @@ def get_exact_rotations(group):
     not require interpolation.  These rotations are good for checking 
     equivariance, because interpolation can be a significant source of error.
     """
-    octa = get_octahedral_group()
+    octa = octa_group()
     exact_rots = []
 
     for octa_element in octa.elements:
@@ -30,19 +30,8 @@ def get_exact_rotations(group):
 
     assert len(exact_rots) > 1
     return exact_rots
-        
-@cache
-def get_octahedral_group():
-    """
-    Return the octahedral group.
 
-    This function is cached because it takes a few seconds to instantiate an 
-    octahedral group object each time.  The object returned by this function 
-    should never be modified (since the same object is reused on each call).
-    """
-    return Octahedral()
-
-
-
+def integers(params):
+    return [int(x) for x in params.split()]
 
 

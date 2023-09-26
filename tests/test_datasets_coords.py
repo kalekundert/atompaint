@@ -22,6 +22,9 @@ def frame(params):
     rot_vec_rad = vector(params['rot_vec_rad'])
     return apdc.make_coord_frame(origin, rot_vec_rad)
 
+def frames(params):
+    return [frame(x) for x in params]
+
 def coord(params):
     return matrix(params)
 
