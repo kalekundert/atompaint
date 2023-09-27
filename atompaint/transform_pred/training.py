@@ -9,8 +9,9 @@ from .datasets.classification import (
 )
 from atompaint.datasets.voxelize import ImageParams, Grid
 from lightning.pytorch.cli import LightningCLI
-from torch import nn
+from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader
+from torchmetrics import Accuracy
 from pathlib import Path
 from typing import Optional
 
@@ -23,26 +24,34 @@ class PredictorModule(pl.LightningModule):
     def __init__(self, model: TransformationPredictor):
         super().__init__()
         self.model = model
-        self.loss = nn.CrossEntropyLoss()
+        self.loss = CrossEntropyLoss()
+        self.accuracy = Accuracy(task='multiclass', num_classes=6)
 
     def forward(self, batch):
         x, y = batch
         y_hat = self.model(x)
-        return self.loss(y_hat, y)
+
+        loss = self.loss(y_hat, y)
+        acc = self.accuracy(y_hat, y)
+
+        return loss, acc
 
     def training_step(self, batch, _):
-        loss = self.forward(batch)
-        self.log('val_loss', loss, sync_dist=True)
+        loss, acc = self.forward(batch)
+        self.log('train_loss', loss)
+        self.log('train_accuracy', acc)
         return loss
 
     def validation_step(self, batch, _):
-        loss = self.forward(batch)
-        self.log('val_loss', loss, sync_dist=True)
+        loss, acc = self.forward(batch)
+        self.log('val_loss', loss)
+        self.log('val_accuracy', acc)
         return loss
 
     def test_step(self, batch, _):
-        loss = self.forward(batch)
-        self.log('test_loss', loss, sync_dist=True)
+        loss, acc = self.forward(batch)
+        self.log('test_loss', loss)
+        self.log('test_accuracy', acc)
         return loss
 
 class DataModule(pl.LightningDataModule):
