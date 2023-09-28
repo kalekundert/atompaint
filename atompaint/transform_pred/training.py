@@ -70,12 +70,13 @@ class DataModule(pl.LightningDataModule):
             # View pair parameters
             view_padding_A: float,
             reuse_count: int,
+            recording_path: Optional[Path] = None,
 
             # Data loader parameters
             batch_size: int,
             train_epoch_size: int,
-            val_epoch_size: int = None,
-            test_epoch_size: int = None,
+            val_epoch_size: Optional[int] = None,
+            test_epoch_size: Optional[int] = None,
             num_workers: Optional[int] = None,
     ):
         super().__init__()
@@ -108,6 +109,7 @@ class DataModule(pl.LightningDataModule):
                     low_seed=low_seed,
                     high_seed=high_seed,
                     reuse_count=reuse_count,
+                    recording_path=recording_path,
             )
 
         def make_dataloader(low_seed, high_seed):

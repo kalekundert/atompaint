@@ -166,7 +166,7 @@ class ParquetOriginSampler:
         from .utils import sample_origin
         origin_a, tag = sample_origin(rng, self.origins)
         origins_b = self.origins_by_tag.get_group(tag)
-        return origin_a, origins_b, atoms_from_tag(tag)
+        return tag, origin_a, origins_b, atoms_from_tag(tag)
 
     def teardown(self):
         pass
@@ -221,7 +221,7 @@ class SqliteOriginSampler:
         origins_b['tag'] = tag
         atoms = atoms_from_tag(tag)
 
-        return origin_a, origins_b, atoms
+        return tag, origin_a, origins_b, atoms
 
     def teardown(self):
         try:

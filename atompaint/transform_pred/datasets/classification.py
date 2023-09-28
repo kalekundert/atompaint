@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from .origins import select_origin_filtering_atoms, filter_origin_coords
+from .recording import init_recording, record_training_example, record_img_params
 from .utils import sample_origin, sample_coord_frame
 from atompaint.datasets.atoms import transform_atom_coords
 from atompaint.datasets.coords import make_coord_frame, get_origin
@@ -22,6 +23,7 @@ class ViewIndexDataStream(IterableDataset):
             low_seed,
             high_seed,
             reuse_count,
+            recording_path=None,
     ):
         self.frames_ab = frames_ab
         self.input_from_atoms = input_from_atoms
@@ -30,6 +32,11 @@ class ViewIndexDataStream(IterableDataset):
         self.epoch_size = high_seed - low_seed
         self.reuse_count = reuse_count
 
+        if recording_path is None:
+            self.recording_db = None
+        else:
+            self.recording_db = init_recording(recording_path, frames_ab)
+
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         seeds = _get_seeds(self.low_seed, self.epoch_size // self.reuse_count, worker_info)
@@ -37,7 +44,7 @@ class ViewIndexDataStream(IterableDataset):
         for seed in seeds:
             rng = np.random.default_rng(seed)
 
-            _, origins, atoms_i = self.origin_sampler.sample(rng)
+            tag, _, origins, atoms_i = self.origin_sampler.sample(rng)
             view_pairs = _sample_view_pairs(
                     rng,
                     origins,
@@ -56,7 +63,15 @@ class ViewIndexDataStream(IterableDataset):
                 input_b = self.input_from_atoms(atoms_b)
                 input_ab = np.stack([input_a, input_b])
 
+                if self.recording_db:
+                    record_training_example(
+                            self.recording_db,
+                            seed, tag, frame_ia, b, input_ab,
+                    )
+
                 yield torch.from_numpy(input_ab).float(), b
+
+
 
 class CnnViewIndexDataStream(ViewIndexDataStream):
 
@@ -68,6 +83,7 @@ class CnnViewIndexDataStream(ViewIndexDataStream):
             low_seed,
             high_seed,
             reuse_count,
+            recording_path=None,
     ):
         input_from_atoms = partial(image_from_atoms, img_params=img_params)
 
@@ -78,7 +94,11 @@ class CnnViewIndexDataStream(ViewIndexDataStream):
                 low_seed=low_seed,
                 high_seed=high_seed,
                 reuse_count=reuse_count,
+                recording_path=recording_path,
         )
+
+        if self.recording_db:
+            record_img_params(self.recording_db, img_params)
 
 def make_cube_face_frames_ab(length_A, padding_A):
     """
