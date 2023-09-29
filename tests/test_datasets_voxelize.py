@@ -145,7 +145,7 @@ def test_get_element_radius(radii, element, expected):
         schema=pff.cast(radii=with_py.eval, expected=float),
 )
 def test_get_element_channel(channels, element, expected):
-    assert apdv._get_element_channel(channels, element, {}) == expected
+    assert apdv.get_element_channel(channels, element, {}) == expected
 
 
 @pff.parametrize(

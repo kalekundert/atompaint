@@ -57,6 +57,17 @@ def record_training_example(db, seed, tag, frame_ia, b, input_ab):
     )
     db.commit()
 
+def drop_training_example(db, input_ab):
+    db.execute('DELETE FROM training_examples WHERE input=?', (input_ab,))
+    db.commit()
+
+def has_training_example(db, input_ab):
+    cur = db.execute(
+            'SELECT rowid FROM training_examples WHERE input=?',
+            (input_ab,),
+    )
+    return cur.fetchone() is not None
+
 
 def load_recording(path):
     sqlite3.register_adapter(np.ndarray, _adapt_np_array)
@@ -89,6 +100,18 @@ def load_img_params(db):
         return row[0]
     else:
         raise ValueError("can't find image parameters in recording")
+
+def load_training_example(db, seed):
+    cur = db.execute('''\
+            SELECT tag, frame_ia, frame_ab, input
+                FROM training_examples
+                WHERE seed=?
+    ''', (seed,))
+
+    if row := cur.fetchone():
+        return row
+    else:
+        raise ValueError(f"can't find training example with seed={seed}")
 
 def iter_training_examples(db):
     cur = db.execute('SELECT * FROM training_examples')

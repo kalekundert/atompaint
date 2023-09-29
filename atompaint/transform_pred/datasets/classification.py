@@ -148,7 +148,7 @@ def _sample_view_pairs(rng, origins, frames_ab, origin_params, atoms_i):
 
         # Bail out if it's too hard to find valid view pairs in this structure.  
         # I should add some sort of logging to see how often this happens.
-        if num_pairs / num_origins < 0.1:
+        if (num_pairs + 1) / (num_origins + 1) < 0.1:
             return
 
 def _filter_views(frame_ia, frames_ab, origin_params, filtering_atoms_i):

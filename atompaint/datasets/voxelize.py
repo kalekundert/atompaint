@@ -99,6 +99,31 @@ def image_from_atoms(
 
     return img
         
+def get_voxel_center_coords(grid, voxels):
+    return _get_voxel_center_coords_jit(
+            grid.length_voxels,
+            grid.resolution_A,
+            grid.center_A,
+            voxels,
+    )
+
+def get_element_channel(channels, element, cache):
+    if element in cache:
+        return cache[element]
+
+    for i, channel in enumerate(channels):
+        if re.fullmatch(channel, element):
+            cache[element] = i
+            return i
+
+    raise RuntimeError(f"element {element} didn't match any channels")
+
+def get_max_element_radius(radii):
+    if isinstance(radii, Real):
+        return radii
+    else:
+        return max(radii.values())
+
 
 def _make_empty_image(img_params):
     shape = len(img_params.channels), *img_params.grid.shape
@@ -106,7 +131,7 @@ def _make_empty_image(img_params):
 
 def _discard_atoms_outside_image(atoms, img_params):
     grid = img_params.grid
-    max_r = _get_max_element_radius(img_params.element_radii_A)
+    max_r = get_max_element_radius(img_params.element_radii_A)
 
     min_corner = grid.center_A - (grid.length_A / 2 + max_r)
     max_corner = grid.center_A + (grid.length_A / 2 + max_r)
@@ -129,7 +154,7 @@ def _make_atom(row, img_params, channel_cache):
                     row.element,
                 ),
             ),
-            channel=_get_element_channel(
+            channel=get_element_channel(
                 img_params.channels,
                 row.element,
                 channel_cache,
@@ -144,23 +169,6 @@ def _get_element_radius(radii, element):
         return radii[element]
     except KeyError:
         return radii['*']
-
-def _get_max_element_radius(radii):
-    if isinstance(radii, Real):
-        return radii
-    else:
-        return max(radii.values())
-
-def _get_element_channel(channels, element, cache):
-    if element in cache:
-        return cache[element]
-
-    for i, channel in enumerate(channels):
-        if re.fullmatch(channel, element):
-            cache[element] = i
-            return i
-
-    raise RuntimeError(f"element {element} didn't match any channels")
 
 # The following functions are performance-critical:
 
@@ -275,14 +283,6 @@ def _get_voxel_verts_jit(
         voxel,
     )
     return _get_cube_verts_jit(center_A, grid_resolution_A)
-
-def _get_voxel_center_coords(grid, voxels):
-    return _get_voxel_center_coords_jit(
-            grid.length_voxels,
-            grid.resolution_A,
-            grid.center_A,
-            voxels,
-    )
 
 @jit
 def _get_voxel_center_coords_jit(

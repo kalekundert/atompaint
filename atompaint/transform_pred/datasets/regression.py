@@ -11,7 +11,7 @@ from .origins import get_origin_coords
 from .utils import sample_origin, sample_coord_frame, NoOriginsToSample
 from atompaint.datasets.coords import invert_coord_frame
 from atompaint.datasets.atoms import transform_atom_coords
-from atompaint.datasets.voxelize import image_from_atoms, _get_max_element_radius
+from atompaint.datasets.voxelize import image_from_atoms, get_max_element_radius
 from torch.utils.data import Dataset
 from numpy.typing import NDArray
 from dataclasses import dataclass
@@ -158,7 +158,7 @@ def calc_min_distance_between_origins(img_params):
     # Add the radius of the largest possible atom, so that no atom can possibly 
     # appear in both views.  This degree of overlap probably wouldn't matter 
     # anyways, but might as well be as correct as possible.
-    atom_radius_A = _get_max_element_radius(img_params.element_radii_A)
+    atom_radius_A = get_max_element_radius(img_params.element_radii_A)
 
     return 2 * (grid_radius_A + atom_radius_A)
 

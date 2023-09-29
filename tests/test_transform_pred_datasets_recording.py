@@ -19,12 +19,25 @@ def test_record_training_example():
 
     ap.record_training_example(
             db, 99, '1abc', mock_frame_ia, np.int64(0), mock_input_ab)
-    training_example = one(ap.iter_training_examples(db))
-    assert training_example[0] == 99
-    assert training_example[1] == '1abc'
-    np.testing.assert_array_equal(training_example[2], mock_frame_ia)
-    assert training_example[3] == 0
-    np.testing.assert_array_equal(training_example[4], mock_input_ab)
+
+    seed, tag, frame_ia, b, input_ab = one(ap.iter_training_examples(db))
+    assert seed == 99
+    assert tag == '1abc'
+    np.testing.assert_array_equal(frame_ia, mock_frame_ia)
+    assert b == 0
+    np.testing.assert_array_equal(input_ab, mock_input_ab)
+
+    tag, frame_ia, b, input_ab = ap.load_training_example(db, 99)
+    assert tag == '1abc'
+    np.testing.assert_array_equal(frame_ia, mock_frame_ia)
+    assert b == 0
+    np.testing.assert_array_equal(input_ab, mock_input_ab)
+
+    assert ap.has_training_example(db, mock_input_ab)
+
+    ap.drop_training_example(db, mock_input_ab)
+
+    assert not ap.has_training_example(db, mock_input_ab)
 
     # Only 6 frames; illegal to reference a frame beyond that.  Note that we're 
     # also implicitly testing 0-indexing here, which is useful because SQLite 

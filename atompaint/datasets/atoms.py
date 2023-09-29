@@ -94,7 +94,7 @@ def atoms_from_tag(tag: str) -> Atoms:
         # imagine that this would be wrong in some cases, but I think it'll be 
         # right more often that not.
         id, chain = id[:4], id[4]
-        path = _get_pdb_redo_path(id, '.feather')
+        path = get_pdb_redo_path(id, '.feather')
         return atoms_from_feather(path, chain=chain)
     else:
         raise ValueError(f"unknown tag prefix: {tag}")
@@ -155,7 +155,7 @@ def atoms_from_pymol(sele: str, state=-1) -> Atoms:
 
     return pd.DataFrame(rows, columns=['monomer', 'element', 'x', 'y', 'z', 'occupancy'])
 
-def _get_pdb_redo_path(id: str, suffix='.cif') -> Path:
+def get_pdb_redo_path(id: str, suffix='.cif') -> Path:
     id = id.lower()
     root = Path(os.environ['PDB_DIR'])
     return root / id[1:3] / f'{id}_final{suffix}'
