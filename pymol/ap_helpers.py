@@ -1,6 +1,7 @@
 import pymol
 import numpy as np
 import mixbox
+import random
 import re
 
 from pymol import cmd
@@ -20,35 +21,33 @@ from atompaint.datasets.voxelize import (
         ImageParams, Grid, image_from_atoms, get_element_channel,
         get_voxel_center_coords,
 )
-from atompaint.transform_pred.datasets.utils import sample_origin
 from atompaint.transform_pred.datasets.recording import (
-        init_recording, load_recording, load_frames_ab, load_img_params,
-        iter_training_examples, record_training_example, drop_training_example,
-        has_training_example,
+        init_manual_predictions, record_manual_prediction,
+        load_recording, load_frames_ab, load_img_params,
+        load_all_training_example_ids, load_training_example,
 )
 from atompaint.transform_pred.datasets.origins import (
         OriginParams, choose_origins_for_atoms,
 )
-from atompaint.transform_pred.datasets.regression import (
-        ViewPairParams, sample_view_pair, calc_min_distance_between_origins,
-)
 
 def ap_voxelize(
-        sele='all',
-        length_voxels=10,
-        resolution_A=1,
         center_sele=None,
+        all_sele='all',
+        length_voxels=21,
+        resolution_A=0.75,
         channels='C,N,O',
         element_radii_A=None,
+        outline=False,
         state=-1,
+        sele_name='within_img',
         obj_name='voxels',
+        outline_name='outline',
 ):
-    atoms = atoms_from_pymol(sele, state)
+    atoms = atoms_from_pymol(all_sele, state)
     length_voxels = int(length_voxels)
     resolution_A = float(resolution_A)
-    center_A = cmd.centerofmass(center_sele or sele, state)
+    center_A = np.array(cmd.centerofmass(center_sele or all_sele, state))
     channels = parse_channels(channels)
-    channel_colors = pick_channel_colors(sele, channels)
     element_radii_A = parse_element_radii_A(element_radii_A, resolution_A)
     state = int(state)
 
@@ -61,96 +60,24 @@ def ap_voxelize(
             channels=channels,
             element_radii_A=element_radii_A,
     )
+    select_view(
+            sele_name,
+            all_sele,
+            img_params.grid,
+    )
     render_view(
             obj_names=dict(
                 voxels=obj_name,
+                outline=outline_name,
             ),
             atoms_x=atoms,
             img_params=img_params,
-            channel_colors=channel_colors,
+            channel_colors=pick_channel_colors(sele_name, channels),
+            outline=outline,
     )
 
 pymol.cmd.extend('ap_voxelize', ap_voxelize)
 cmd.auto_arg[0]['ap_voxelize'] = cmd.auto_arg[0]['zoom']
-
-def ap_view_pair(
-        sele='all',
-        length_voxels=10,
-        resolution_A=1,
-        origin_a=None,
-        channels='C,N,O',
-        element_radii_A=None,
-        min_nearby_atoms=25,
-        nearby_radius_A=5,
-        max_dist_A=2,
-        random_seed=0,
-        state=-1,
-):
-    atoms = atoms_from_pymol(sele, state)
-    length_voxels = int(length_voxels)
-    resolution_A = float(resolution_A)
-    channels = parse_channels(channels)
-    channel_colors = pick_channel_colors(sele, channels)
-    element_radii_A = parse_element_radii_A(element_radii_A, resolution_A)
-    min_nearby_atoms = int(min_nearby_atoms)
-    nearby_radius_A = float(nearby_radius_A)
-    max_dist_A = float(max_dist_A)
-    rng = np.random.default_rng(int(random_seed))
-    state = int(state)
-
-    origin_params = OriginParams(
-            min_nearby_atoms=min_nearby_atoms,
-            radius_A=nearby_radius_A,
-    )
-    img_params = ImageParams(
-            grid=Grid(
-                length_voxels=length_voxels,
-                resolution_A=resolution_A,
-            ),
-            channels=channels,
-            element_radii_A=element_radii_A,
-    )
-    min_dist_A = calc_min_distance_between_origins(img_params)
-    view_pair_params = ViewPairParams(
-            min_dist_A=min_dist_A,
-            max_dist_A=min_dist_A + max_dist_A,
-    )
-
-    origins = choose_origins_for_atoms(sele, atoms, origin_params)
-
-    if origin_a is None:
-        origin_a, _ = sample_origin(rng, origins)
-    else:
-        origin_a = get_coord(origin_a)
-
-    view_pair = sample_view_pair(
-            rng, atoms, origin_a, origins, view_pair_params)
-
-    render_view(
-            obj_names=dict(
-                voxels='view_a',
-                axes='frame_a',
-            ),
-            atoms_x=view_pair.atoms_a,
-            img_params=img_params,
-            channel_colors=channel_colors,
-            frame_xi=view_pair.frame_ai,
-            state=state,
-    )
-    render_view(
-            obj_names=dict(
-                voxels='view_b',
-                axes='frame_b',
-            ),
-            atoms_x=view_pair.atoms_b,
-            img_params=img_params,
-            channel_colors=channel_colors,
-            frame_xi=view_pair.frame_bi,
-            state=state,
-    )
-
-pymol.cmd.extend('ap_view_pair', ap_view_pair)
-cmd.auto_arg[0]['ap_view_pair'] = cmd.auto_arg[0]['zoom']
 
 def ap_origin_weights(
         sele='all',
@@ -188,46 +115,34 @@ class TrainingExamples(Wizard):
     # TODO: It'd be nice to be able to show the actual prediction made by the 
     # model, for each training example.
 
-    def __init__(self, recording_path, validation_path=None):
+    def __init__(self, recording_path, initial_example_id=None):
         super().__init__()
 
-        db = load_recording(recording_path)
-        self.training_examples = iter_training_examples(db)
-        self.frames_ab = load_frames_ab(db)
+        self.db = db = load_recording(recording_path)
+        self.example_ids = load_all_training_example_ids(db)
         self.img_params = load_img_params(db)
 
-        self.validation_path = validation_path
-        if validation_path is not None:
-            self.validation_db = init_recording(validation_path, self.frames_ab)
+        if initial_example_id is None:
+            self._i = 0
+        else:
+            self._i = self.example_ids.find(initial_example_id)
 
-        self.curr_pdb_obj = None
         self.curr_training_example = None
+        self.curr_pdb_obj = None
 
-        self.show_next_training_example()
+        self.update_training_example()
 
     def get_panel(self):
         panel = [
                 [1, "AtomPaint Training Examples", ''],
-        ]
-
-        if self.validation_path:
-            if has_training_example(self.validation_db, self.curr_input_ab):
-                button = [2, f"Remove from: \\090{self.validation_path}", 'cmd.get_wizard().remove_from_manual_validation_set()']
-            else:
-                button = [2, f"Add to: \\090{self.validation_path}", 'cmd.get_wizard().add_to_manual_validation_set()']
-
-            panel.append(button)
-
-        panel += [
                 [2, "Next", 'cmd.get_wizard().show_next_training_example()'],
+                [2, "Previous", 'cmd.get_wizard().show_prev_training_example()'],
                 [2, "Done", 'cmd.set_wizard()'],
         ]
-
         return panel
 
     def get_prompt(self):
-        if self.curr_training_example:
-            return [f"Seed: {self.curr_seed}"]
+        return [f"Example: {self.curr_training_example_id}"]
 
     def do_key(self, key, x, y, mod):
         # This is <Ctrl-Space>; see `wt_vs_mut` for details.
@@ -243,22 +158,26 @@ class TrainingExamples(Wizard):
         return Wizard.event_mask_key
 
     def show_next_training_example(self):
-        cmd.delete(self.curr_pdb_obj)
+        self._i = (self._i + 1) % len(self.example_ids)
+        self.update_training_example()
 
-        try:
-            self.curr_training_example = next(self.training_examples)
-        except StopIteration:
-            cmd.set_wizard()
-            return
+    def show_prev_training_example(self):
+        self._i = (self._i - 1) % len(self.example_ids)
+        self.update_training_example()
 
-        seed, tag, frame_ia, b, images_ab = self.curr_training_example
+    def update_training_example(self):
+        id = self.curr_training_example_id
+        self.curr_training_example = ex = load_training_example(self.db, id)
 
-        self.curr_pdb_obj = load_tag(tag)
+        if self.curr_pdb_obj:
+            cmd.delete(self.curr_pdb_obj)
+
+        self.curr_pdb_obj = load_tag(ex['tag'], all_chains=True)
         cmd.util.cbc('elem C')
 
+        frame_ia = ex['frame_ia']
         frame_ai = invert_coord_frame(frame_ia)
-        frame_ab = self.frames_ab[b]
-        frame_ib = frame_ab @ frame_ia
+        frame_ib = ex['frame_ab'] @ frame_ia
         frame_bi = invert_coord_frame(frame_ib)
 
         select_view(
@@ -275,7 +194,7 @@ class TrainingExamples(Wizard):
         )
 
         render_image(
-                img=images_ab[0],
+                img=ex['input'][0],
                 grid=self.img_params.grid,
                 outline=(1, 1, 0),
                 frame_xi=frame_ai,
@@ -286,11 +205,10 @@ class TrainingExamples(Wizard):
                 obj_names=dict(
                     voxels='voxels_a',
                     outline='outline_a',
-                    axes='axes',
                 ),
         )
         render_image(
-                img=images_ab[1],
+                img=ex['input'][1],
                 grid=self.img_params.grid,
                 outline=(0.4, 0.4, 0),
                 frame_xi=frame_bi,
@@ -301,7 +219,6 @@ class TrainingExamples(Wizard):
                 obj_names=dict(
                     voxels='voxels_b',
                     outline='outline_b',
-                    axes='axes',
                 ),
         )
 
@@ -309,27 +226,181 @@ class TrainingExamples(Wizard):
         cmd.zoom('sele_a or sele_b', buffer=10)
         cmd.center('sele_a')
 
-    def add_to_manual_validation_set(self):
-        record_training_example(self.validation_db, *self.curr_training_example)
-        cmd.refresh_wizard()
-
-    def remove_from_manual_validation_set(self):
-        drop_training_example(self.validation_db, self.curr_input_ab)
-        cmd.refresh_wizard()
-
     @property
-    def curr_seed(self):
-        return self.curr_training_example[0]
+    def curr_training_example_id(self):
+        return self.example_ids[self._i]
 
-    @property
-    def curr_input_ab(self):
-        return self.curr_training_example[4]
 
 def ap_training_examples(recording_path, validation_path=None):
     wizard = TrainingExamples(recording_path, validation_path)
     cmd.set_wizard(wizard)
 
 pymol.cmd.extend('ap_training_examples', ap_training_examples)
+
+class ManualClassifier(Wizard):
+
+    def __init__(self, recording_path):
+        super().__init__()
+
+        self.db = db = load_recording(recording_path)
+        self.frames_ab = load_frames_ab(db)
+        self.frame_names = get_frame_names(self.frames_ab)
+        self.img_params = load_img_params(db)
+
+        self.example_ids = load_all_training_example_ids(db)
+        self.curr_example_id = None
+        self.curr_training_example = None
+
+        init_manual_predictions(db)
+        self.init_settings()
+        self.init_view_boxes()
+        self.init_random_example()
+
+    def get_panel(self):
+        return [
+                [1, "AtomPaint Manual Classifier", ''],
+                [2, "Submit", 'cmd.get_wizard().submit_guess()'],
+                [2, "Skip", 'cmd.get_wizard().skip_guess()'],
+                [2, "Done", 'cmd.set_wizard()'],
+        ]
+
+    def get_prompt(self):
+        return [self.frame_names[self.curr_b]]
+
+    def do_key(self, key, x, y, mod):
+        tab = (9, 0)
+        ctrl_tab = (9, 2)
+
+        def update_guess(step):
+            next_b = (self.curr_b + step) % len(self.frames_ab)
+            self.update_guess(next_b)
+
+        if (key, mod) == tab:
+            update_guess(1)
+            return 1
+        if (key, mod) == ctrl_tab:
+            update_guess(-1)
+            return 1
+
+        return 0
+
+    def get_event_mask(self):
+        return Wizard.event_mask_key
+
+    def init_settings(self):
+        cmd.set('cartoon_gap_cutoff', 0)
+
+    def init_view_boxes(self):
+        grid = self.img_params.grid
+        bright_yellow = 1, 1, 0
+        dim_yellow = 0.4, 0.4, 0
+
+        boxes = []
+        boxes += cgo_cube_edges(grid.center_A, grid.length_A, bright_yellow)
+
+        for i, frame_ab in enumerate(self.frames_ab):
+            origin = get_origin(frame_ab)
+            boxes += cgo_cube_edges(origin, grid.length_A, dim_yellow)
+
+        cmd.load_cgo(boxes, 'positions')
+        
+    def init_random_example(self):
+        self.curr_example_id = random.choice(self.example_ids)
+        self.curr_training_example = load_training_example(
+                self.db,
+                self.curr_example_id,
+        )
+
+        frame_ia = self.curr_frame_ia
+        frame_ib = self.curr_frame_ab @ frame_ia
+
+        pdb_obj = load_tag(self.curr_tag)
+        cmd.hide('everything', pdb_obj)
+
+        select_view(
+                name='sele_a',
+                sele=pdb_obj,
+                grid=self.img_params.grid,
+                frame_ix=frame_ia,
+        )
+        select_view(
+                name='sele_b',
+                sele=pdb_obj,
+                grid=self.img_params.grid,
+                frame_ix=frame_ib,
+        )
+
+        cmd.delete('view_a')
+        cmd.delete('view_b')
+
+        cmd.extract('view_a', 'sele_a')
+        cmd.extract('view_b', 'sele_b')
+
+        cmd.delete('sele_a')
+        cmd.delete('sele_b')
+        cmd.delete(pdb_obj)
+
+        cmd.util.cbag()
+
+        frame_1d = list(frame_ia.flat)
+        cmd.set_object_ttt('view_a', frame_1d)
+
+        self.update_guess(0)
+
+        cmd.show('cartoon', 'view_a or view_b')
+        cmd.show('sticks', 'view_a or view_b')
+        cmd.zoom('positions', buffer=5)
+
+    def update_guess(self, b):
+        frame_aB = self.curr_frame_ab
+        frame_ba = invert_coord_frame(self.frames_ab[b])
+        frame_ia = frame_ba @ frame_aB @ self.curr_frame_ia
+        frame_1d = list(frame_ia.flat)
+        cmd.set_object_ttt('view_b', frame_1d)
+        
+        self.curr_b = b
+        cmd.refresh_wizard()
+
+    def submit_guess(self):
+        record_manual_prediction(self.db, self.curr_example_id, self.curr_b)
+
+        guess = self.frame_names[self.curr_b]
+        answer = self.frame_names[self.curr_true_b]
+        correct = (self.curr_b == self.curr_true_b)
+
+        print(f"Guess: {guess};  Answer: {answer};  {'Correct' if correct else 'Incorrect'}!")
+
+        self.init_random_example()
+
+    def skip_guess(self):
+        record_manual_prediction(self.db, self.curr_example_id, None)
+
+        answer = self.frame_names[self.curr_true_b]
+        print(f"Guess: --;  Answer: {answer};  Skipped!")
+
+        self.init_random_example()
+
+    @property
+    def curr_tag(self):
+        return self.curr_training_example['tag']
+
+    @property
+    def curr_frame_ia(self):
+        return self.curr_training_example['frame_ia']
+
+    @property
+    def curr_frame_ab(self):
+        return self.curr_training_example['frame_ab']
+
+    @property
+    def curr_true_b(self):
+        return self.curr_training_example['b']
+
+def ap_manual_classifier(recording_path):
+    wizard = ManualClassifier(recording_path)
+    cmd.set_wizard(wizard)
+
+pymol.cmd.extend('ap_manual_classifier', ap_manual_classifier)
 
 def render_view(
         *,
@@ -338,6 +409,7 @@ def render_view(
         img_params,
         channel_colors,
         axes=False,
+        outline=False,
         frame_xi=None,
         state=-1,
 ):
@@ -348,6 +420,7 @@ def render_view(
             grid=img_params.grid,
             channel_colors=channel_colors,
             axes=axes,
+            outline=outline,
             frame_xi=frame_xi,
             state=state,
     )
@@ -394,25 +467,36 @@ def render_image(
 
     cmd.set_view(view)
 
-def select_view(name, sele, grid, frame_ix):
-    n = cmd.count_atoms(sele)
-    coords_i = np.zeros((n, 4))
-    cmd.iterate_state(
-            state=1,
+def select_view(name, sele, grid, frame_ix=None):
+    indices = []
+    cmd.iterate(
             selection=sele,
-            expression='coords_i[index-1] = (x, y, z, 1)',
+            expression='indices.append(index)',
             space=locals(),
     )
 
-    coords_x = transform_coords(coords_i, frame_ix)
-    
+    coords_i = np.zeros((len(indices), 4))
+    i_from_index = {x: i for i, x in enumerate(indices)}
+    cmd.iterate_state(
+            selection=sele,
+            expression='coords_i[i_from_index[index]] = (x, y, z, 1)',
+            space=locals(),
+            state=1,
+    )
+
+    if frame_ix is not None:
+        coords_x = transform_coords(coords_i, frame_ix)
+    else:
+        coords_x = coords_i
+
+    coords_x = coords_x[:,:3] - grid.center_A
     half_len = grid.length_A / 2
     within_grid = np.logical_and(
             coords_x >= -half_len,
             coords_x <= half_len,
     ).all(axis=1)
 
-    cmd.alter(sele, 'b = within_grid[index-1]', space=locals())
+    cmd.alter(sele, 'b = within_grid[i_from_index[index]]', space=locals())
     cmd.select(name, 'b = 1')
 
 def parse_channels(channels_str):
@@ -447,24 +531,33 @@ def pick_channel_colors(sele, channels):
 
     return colors
 
-def load_tag(tag):
-    # Tags don't necessarily have associated PDB/mmCIF files, they just need to 
-    # specify enough information to create an `atoms` data frame.  For this 
-    # reason, the core atompaint library doesn't provide a function for 
-    # extracting a path from a tag.  We need that ability here, though, so we 
-    # basically have to reverse-engineer the tag parser.
-    #
-    # Probably the most proper solution would be to teach atompaint how to 
-    # generate PDB/mmCIF from `atoms` data frames, but for now this seems like 
-    # too much work.
+def load_tag(tag, all_chains=False):
+    """
+    Load the structure referenced by the given tag.
 
-    m = re.fullmatch('pisces/(\w{4})\w+', tag)
-    pdb_id = m.group(1)
+    When AtomPaint constructs training examples, it doesn't necessarily use all 
+    of the atoms that are present in the underlying structure.  The purpose of 
+    this function is to load even those atoms that weren't included, so we can 
+    see if AtomPaint is missing anything important.
+
+    Unfortunately, we have to do this in a somewhat hacky way.  The issue is 
+    that tags are meant to be opaque names for sets of atoms.  They aren't 
+    guaranteed to be associated with any PDB/mmCIF files, so AtomPaint doesn't 
+    provide any way to get the "whole structure" associated with any tag.  So, 
+    here we basically have to duplicate the tag-parsing logic.
+    """
+    m = re.fullmatch(r'pisces/(\w{4})(\w)', tag)
+    pdb_id, chain = m.groups()
 
     pdb_path = get_pdb_redo_path(pdb_id)
+    pdb_obj = pdb_path.stem
+
     cmd.load(pdb_path)
 
-    return pdb_path.stem
+    if not all_chains:
+        cmd.remove(f'{pdb_obj} and not chain {chain}')
+
+    return pdb_obj
 
 def cgo_voxels(img, grid, channel_colors=None):
     c, w, h, d = img.shape
@@ -563,6 +656,9 @@ def cgo_cube(center, length, color=(1, 1, 1), alpha=1.0, face_mask=6 * (1,)):
     return faces
 
 def cgo_cube_edges(center, length, color=(1, 1, 1)):
+    if color and not isinstance(color, tuple):
+        color = (1, 1, 0)
+
     verts = np.array([
             [0, 0, 0],
             [0, 0, 1],
@@ -627,6 +723,27 @@ def cgo_axes():
             CONE, *(l1 * y), *(l2 * y), d, 0, *g, *g, 1, 1,
             CONE, *(l1 * z), *(l2 * z), d, 0, *b, *b, 1, 1,
     ]
+
+def get_frame_names(frames_ab):
+    # Currently, only "cube face" frames are supported.
+    names_from_origins = {
+            ( 1,  0,  0): '+X',
+            (-1,  0,  0): '-X',
+            ( 0,  1,  0): '+Y',
+            ( 0, -1,  0): '-Y',
+            ( 0,  0,  1): '+Z',
+            ( 0,  0, -1): '-Z',
+    }
+    names = []
+
+    for frame_ab in frames_ab:
+        origin = get_origin(frame_ab)
+        direction = origin / np.linalg.norm(origin)
+        key = tuple(np.rint(direction).astype(int))
+        name = names_from_origins[key]
+        names.append(name)
+
+    return names
 
 def get_coord(coord_or_sele):
     coord_pat = r'\s+'.join(3 * [r'([+-]?\d*\.?\d*)'])

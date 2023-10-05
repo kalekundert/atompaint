@@ -1,6 +1,7 @@
 import atompaint.datasets.atoms as apda
 import parametrize_from_file as pff
 import pandas as pd
+import re
 
 from test_datasets_coords import frame
 from pathlib import Path
@@ -96,6 +97,23 @@ def test_filter_nonbiological_atoms(atoms, expected):
 def test_atoms_from_mmcif(tmp_files, chain, expected):
     atoms = apda.atoms_from_mmcif(tmp_files / 'atoms.cif', chain=chain)
     pd.testing.assert_frame_equal(atoms, expected)
+
+@pff.parametrize(
+        schema=[
+            pff.cast(atoms=atoms),
+            pff.defaults(name=''),
+        ],
+)
+def test_mmcif_from_atoms(name, atoms, expected, tmp_path):
+    cif_path = tmp_path / 'out.cif'
+    apda.mmcif_from_atoms(cif_path, atoms, name=name)
+
+    # The PDBeCIF library adds a bunch of trailing whitespace for some reason.  
+    # I don't want to actually require that whitespace to be present (it's not 
+    # significant), so instead of adding it to the test case, I just strip it 
+    # out before making the comparison.
+    cif_text = re.sub(r'\s*$', '', cif_path.read_text(), flags=re.MULTILINE)
+    assert cif_text == expected
 
 @pff.parametrize(
         schema=pff.cast(atoms_x=atoms, frame_xy=frame, expected_y=atoms),

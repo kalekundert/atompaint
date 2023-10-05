@@ -12,6 +12,7 @@ import os
 from .coords import (
         Coord, Coords3, Coords4, Frame, transform_coords, homogenize_coords,
 )
+from pdbecif.mmcif_io import CifFileReader, CifFileWriter
 from more_itertools import one
 from functools import cache
 from pathlib import Path
@@ -100,8 +101,6 @@ def atoms_from_tag(tag: str) -> Atoms:
         raise ValueError(f"unknown tag prefix: {tag}")
 
 def atoms_from_mmcif(path: Path, chain: Optional[str | bool]=None) -> Atoms:
-    from pdbecif.mmcif_io import CifFileReader
-
     if not path.exists():
         raise FileNotFoundError(path)
 
@@ -155,6 +154,24 @@ def atoms_from_pymol(sele: str, state=-1) -> Atoms:
 
     return pd.DataFrame(rows, columns=['monomer', 'element', 'x', 'y', 'z', 'occupancy'])
 
+def mmcif_from_atoms(path: Path, atoms: Atoms, *, name: str = ''):
+    # This function is currently not useful for visualizing structures in 
+    # PyMOL, since the lack of atom-type data means that secondary structures 
+    # cannot be displayed.
+    mmcif = {
+            name: {
+                '_atom_site': {
+                    'type_symbol': atoms['element'].to_list(),
+                    'label_comp_id': atoms['monomer'].to_list(),
+                    'Cartn_x': atoms['x'].to_list(),
+                    'Cartn_y': atoms['y'].to_list(),
+                    'Cartn_z': atoms['z'].to_list(),
+                    'occupancy': atoms['occupancy'].to_list(),
+                },
+            },
+    }
+    CifFileWriter(str(path)).write(mmcif)
+    
 def get_pdb_redo_path(id: str, suffix='.cif') -> Path:
     id = id.lower()
     root = Path(os.environ['PDB_DIR'])
