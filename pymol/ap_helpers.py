@@ -230,7 +230,6 @@ class TrainingExamples(Wizard):
     def curr_training_example_id(self):
         return self.example_ids[self._i]
 
-
 def ap_training_examples(recording_path, validation_path=None):
     wizard = TrainingExamples(recording_path, validation_path)
     cmd.set_wizard(wizard)
@@ -294,13 +293,23 @@ class ManualClassifier(Wizard):
         grid = self.img_params.grid
         bright_yellow = 1, 1, 0
         dim_yellow = 0.4, 0.4, 0
+        dim_red = 0.4, 0, 0
+        dim_green = 0, 0.4, 0
+        dim_blue = 0, 0, 0.4
+
+        frame_colors = {
+                '+X': dim_red,
+                '+Y': dim_green,
+                '+Z': dim_blue,
+        }
 
         boxes = []
-        boxes += cgo_cube_edges(grid.center_A, grid.length_A, bright_yellow)
+        boxes += cgo_cube_edges(grid.center_A, grid.length_A, dim_yellow)
 
         for i, frame_ab in enumerate(self.frames_ab):
             origin = get_origin(frame_ab)
-            boxes += cgo_cube_edges(origin, grid.length_A, dim_yellow)
+            color = frame_colors.get(self.frame_names[i], dim_yellow)
+            boxes += cgo_cube_edges(origin, grid.length_A, color)
 
         cmd.load_cgo(boxes, 'positions')
         
