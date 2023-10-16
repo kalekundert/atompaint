@@ -185,6 +185,7 @@ class SqliteOriginSampler:
     def __init__(self, origins_path, copy_to_tmp=True):
         import sqlite3, tempfile, shutil
 
+        origins_path = Path(origins_path)
         db_path = origins_path / 'origins.db'
 
         if copy_to_tmp:

@@ -5,7 +5,7 @@ import io
 
 from atompaint.datasets.voxelize import ImageParams, Grid
 from dataclasses import asdict
-from more_itertools import one, flatten
+from more_itertools import one
 
 class ManuallyVerifiedDataset:
     pass

@@ -1,17 +1,34 @@
-import torch
+"""\
+Usage:
+    ap_transform_pred <config>
+
+Arguments:
+    <config>
+        A YAML file specifying all the hyperparameters for a training run.  The 
+        following keys should be present: 
+
+        trainer: Arguments to the `Trainer` class.
+        model: Arguments to the `PredictorModule` class.
+        data: Arguments to the `DataModule` class.
+"""
+
 import lightning.pytorch as pl
 import os
 
 from .models import TransformationPredictor
 from .datasets.origins import SqliteOriginSampler
 from .datasets.classification import (
-        CnnViewIndexDataStream, make_cube_face_frames_ab,
+        CnnViewIndexDataset, make_cube_face_frames_ab,
 )
+from atompaint.config import load_config
 from atompaint.datasets.voxelize import ImageParams, Grid
-from lightning.pytorch.cli import LightningCLI
+from atompaint.datasets.samplers import RangeSampler, InfiniteSampler
+from atompaint.checkpoints import EvalModeCheckpointMixin
 from torch.nn import CrossEntropyLoss
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torchmetrics import Accuracy
+from docopt import docopt
 from pathlib import Path
 from typing import Optional
 
@@ -19,13 +36,35 @@ from typing import Optional
 # container when I'm not making changes to atompaint anymore, but until then, 
 # I'd have to make a new container for every commit.  
 
-class PredictorModule(pl.LightningModule):
+class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
 
-    def __init__(self, model: TransformationPredictor):
+    def __init__(
+            self, *,
+            frequencies: int,
+            conv_channels: list[int],
+            conv_field_of_view: int | list[int],
+            conv_stride: int | list[int],
+            mlp_channels: int | list[int],
+    ):
         super().__init__()
-        self.model = model
+        self.save_hyperparameters()
+
+        self.model = TransformationPredictor(
+            frequencies=frequencies,
+            conv_channels=conv_channels,
+            conv_field_of_view=conv_field_of_view,
+            conv_stride=conv_stride,
+            mlp_channels=mlp_channels,
+        )
         self.loss = CrossEntropyLoss()
         self.accuracy = Accuracy(task='multiclass', num_classes=6)
+        self.optimizer = Adam(self.model.parameters())
+
+    def on_train_start(self):
+        self.logger.log_hyperparams(self.hparams, {"val/loss": 0})
+
+    def configure_optimizers(self):
+        return self.optimizer
 
     def forward(self, batch):
         x, y = batch
@@ -38,20 +77,20 @@ class PredictorModule(pl.LightningModule):
 
     def training_step(self, batch, _):
         loss, acc = self.forward(batch)
-        self.log('train_loss', loss)
-        self.log('train_accuracy', acc)
+        self.log('train/loss', loss, on_epoch=True)
+        self.log('train/accuracy', acc, on_epoch=True)
         return loss
 
     def validation_step(self, batch, _):
         loss, acc = self.forward(batch)
-        self.log('val_loss', loss)
-        self.log('val_accuracy', acc)
+        self.log('val/loss', loss)
+        self.log('val/accuracy', acc)
         return loss
 
     def test_step(self, batch, _):
         loss, acc = self.forward(batch)
-        self.log('test_loss', loss)
-        self.log('test_accuracy', acc)
+        self.log('test/loss', loss)
+        self.log('test/accuracy', acc)
         return loss
 
 class DataModule(pl.LightningDataModule):
@@ -69,17 +108,17 @@ class DataModule(pl.LightningDataModule):
 
             # View pair parameters
             view_padding_A: float,
-            reuse_count: int,
             recording_path: Optional[Path] = None,
 
             # Data loader parameters
             batch_size: int,
             train_epoch_size: int,
-            val_epoch_size: Optional[int] = None,
-            test_epoch_size: Optional[int] = None,
+            val_epoch_size: int = 0,
+            test_epoch_size: int = 0,
             num_workers: Optional[int] = None,
     ):
         super().__init__()
+        self.save_hyperparameters()
 
         self.origin_sampler = SqliteOriginSampler(origins_path)
         img_params = ImageParams(
@@ -101,37 +140,31 @@ class DataModule(pl.LightningDataModule):
             except KeyError:
                 num_workers = os.cpu_count()
 
-        def make_dataset(low_seed, high_seed):
-            return CnnViewIndexDataStream(
-                    frames_ab=view_frames_ab,
-                    origin_sampler=self.origin_sampler,
-                    img_params=img_params,
-                    low_seed=low_seed,
-                    high_seed=high_seed,
-                    reuse_count=reuse_count,
-                    recording_path=recording_path,
-            )
+        dataset = CnnViewIndexDataset(
+                frames_ab=view_frames_ab,
+                origin_sampler=self.origin_sampler,
+                img_params=img_params,
+                recording_path=recording_path,
+        )
 
-        def make_dataloader(low_seed, high_seed):
+        def make_dataloader(sampler):
             return DataLoader(
-                    make_dataset(low_seed, high_seed),
+                    dataset=dataset,
+                    sampler=sampler,
                     batch_size=batch_size,
                     num_workers=num_workers,
                     pin_memory=True,
             )
 
-        i = train_epoch_size
-        self._train_dataloader = make_dataloader(0, i)
-        self._val_dataloader = None
-        self._test_dataloader = None
+        i = 0
+        j = i + val_epoch_size
+        k = j + train_epoch_size
 
-        if val_epoch_size is not None:
-            j = i + val_epoch_size
-            self._val_dataloader = make_dataloader(i, j)
-
-            if test_epoch_size is not None:
-                k = j + test_epoch_size
-                self._test_dataloader = make_dataloader(j, k)
+        self._val_dataloader = make_dataloader(RangeSampler(i, j))
+        self._test_dataloader = make_dataloader(RangeSampler(j, k))
+        self._train_dataloader = make_dataloader(
+                InfiniteSampler(train_epoch_size, start_index=k),
+        )
 
     def train_dataloader(self):
         return self._train_dataloader
@@ -145,30 +178,11 @@ class DataModule(pl.LightningDataModule):
     def teardown(self, stage):
         self.origin_sampler.teardown()
 
-
 def main():
-    from lightning.pytorch.profilers import PyTorchProfiler
-    from atompaint.diagnostics.shared_mem.profiler import SharedMemoryProfiler
-
-    # Lightning recommends setting this to either 'medium' or 'high' (as
-    # opposed to 'highest', which is the default) when training on GPUs with
-    # support for the necessary acceleration.  I don't think there's a good way
-    # of knowing a priori what the best setting should be; so I chose the
-    # 'high' setting as a compromise to be optimized later.
-    
-    torch.set_float32_matmul_precision('high')
-
-    LightningCLI(
-            PredictorModule, DataModule,
-            save_config_kwargs=dict(
-                overwrite=True,
-            ),
-            trainer_defaults=dict( 
-                #profiler=SharedMemoryProfiler(),
-                #profiler=PyTorchProfiler(profile_memory=True),
-            ),
-    )
-
+    args = docopt(__doc__)
+    config_path = Path(args['<config>'])
+    c = load_config(config_path, PredictorModule, DataModule)
+    c.trainer.fit(c.model, c.data, ckpt_path='last')
 
 if __name__ == '__main__':
     main()

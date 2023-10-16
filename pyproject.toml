@@ -26,6 +26,8 @@ dependencies = [
   'pandera',
   'pdbecif',
   'pymixbox',
+  'pyyaml',
+  'reprfunc',
   'scipy',
   'torch',
   'torchmetrics',

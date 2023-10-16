@@ -7,12 +7,11 @@ from .utils import sample_origin, sample_coord_frame
 from atompaint.datasets.atoms import transform_atom_coords
 from atompaint.datasets.coords import make_coord_frame, get_origin
 from atompaint.datasets.voxelize import image_from_atoms
-from torch.utils.data import IterableDataset
+from torch.utils.data import Dataset
 from escnn.group import GroupElement, so3_group
-from more_itertools import take
 from functools import partial
 
-class ViewIndexDataStream(IterableDataset):
+class ViewIndexDataset(Dataset):
 
     def __init__(
             self,
@@ -20,69 +19,66 @@ class ViewIndexDataStream(IterableDataset):
             frames_ab,
             input_from_atoms,
             origin_sampler,
-            low_seed,
-            high_seed,
-            reuse_count,
             recording_path=None,
     ):
         self.frames_ab = frames_ab
         self.input_from_atoms = input_from_atoms
         self.origin_sampler = origin_sampler
-        self.low_seed = low_seed
-        self.epoch_size = high_seed - low_seed
-        self.reuse_count = reuse_count
 
         if recording_path is None:
             self.recording_db = None
         else:
             self.recording_db = init_recording(recording_path, frames_ab)
 
-    def __iter__(self):
-        worker_info = torch.utils.data.get_worker_info()
-        seeds = _get_seeds(self.low_seed, self.epoch_size // self.reuse_count, worker_info)
+    def __getitem__(self, seed):
+        rng = np.random.default_rng(seed)
 
-        for seed in seeds:
-            rng = np.random.default_rng(seed)
-
+        while True:
             tag, _, origins, atoms_i = self.origin_sampler.sample(rng)
-            view_pairs = _sample_view_pairs(
-                    rng,
-                    origins,
-                    self.frames_ab,
-                    self.origin_sampler.params,
-                    atoms_i,
-            )
 
-            for frame_ia, b in take(self.reuse_count, view_pairs):
-                frame_ab = self.frames_ab[b]
+            try:
+                frame_ia, b = next(
+                        _sample_view_pairs(
+                            rng,
+                            origins,
+                            self.frames_ab,
+                            self.origin_sampler.params,
+                            atoms_i,
+                        ),
+                )
+            except StopIteration:
+                continue
 
-                atoms_a = transform_atom_coords(atoms_i, frame_ia)
-                atoms_b = transform_atom_coords(atoms_a, frame_ab)
+            # If I want to sample multiple view pairs from the same structure 
+            # (which saves time because the KD-tree only needs to be calculated 
+            # once), I could think about finding some way to have this method 
+            # return a whole minibatch instead of just a single training 
+            # example.
 
-                input_a = self.input_from_atoms(atoms_a)
-                input_b = self.input_from_atoms(atoms_b)
-                input_ab = np.stack([input_a, input_b])
+            frame_ab = self.frames_ab[b]
 
-                if self.recording_db:
-                    record_training_example(
-                            self.recording_db,
-                            seed, tag, frame_ia, b, input_ab,
-                    )
+            atoms_a = transform_atom_coords(atoms_i, frame_ia)
+            atoms_b = transform_atom_coords(atoms_a, frame_ab)
 
-                yield torch.from_numpy(input_ab).float(), b
+            input_a = self.input_from_atoms(atoms_a)
+            input_b = self.input_from_atoms(atoms_b)
+            input_ab = np.stack([input_a, input_b])
 
+            if self.recording_db:
+                record_training_example(
+                        self.recording_db,
+                        seed, tag, frame_ia, b, input_ab,
+                )
 
+            return torch.from_numpy(input_ab).float(), torch.tensor(b)
 
-class CnnViewIndexDataStream(ViewIndexDataStream):
+class CnnViewIndexDataset(ViewIndexDataset):
 
     def __init__(
             self, *,
             frames_ab,
             img_params,
             origin_sampler, 
-            low_seed,
-            high_seed,
-            reuse_count,
             recording_path=None,
     ):
         input_from_atoms = partial(image_from_atoms, img_params=img_params)
@@ -91,9 +87,6 @@ class CnnViewIndexDataStream(ViewIndexDataStream):
                 frames_ab=frames_ab,
                 origin_sampler=origin_sampler,
                 input_from_atoms=input_from_atoms,
-                low_seed=low_seed,
-                high_seed=high_seed,
-                reuse_count=reuse_count,
                 recording_path=recording_path,
         )
 
@@ -125,11 +118,10 @@ def make_view_frames_ab(grid: list[GroupElement], radius_A: float):
     return frames_ab
 
 
-def _sample_view_pairs(rng, origins, frames_ab, origin_params, atoms_i):
+def _sample_view_pairs(rng, origins, frames_ab, origin_params, atoms_i, max_tries=10):
     filtering_atoms_i = select_origin_filtering_atoms(atoms_i)
 
-    num_origins = 0
-    num_pairs = 0
+    num_tries = 0
 
     while True:
         origin_a, _ = sample_origin(rng, origins)
@@ -140,15 +132,14 @@ def _sample_view_pairs(rng, origins, frames_ab, origin_params, atoms_i):
                 origin_params,
                 filtering_atoms_i,
         )
-        num_origins += 1
 
         if ok_indices:
             yield frame_ia, rng.choice(ok_indices)
-            num_pairs += 1
 
         # Bail out if it's too hard to find valid view pairs in this structure.  
         # I should add some sort of logging to see how often this happens.
-        if (num_pairs + 1) / (num_origins + 1) < 0.1:
+        num_tries += 1
+        if num_tries > max_tries:
             return
 
 def _filter_views(frame_ia, frames_ab, origin_params, filtering_atoms_i):

@@ -29,7 +29,6 @@ class TransformationPredictor(torch.nn.Module):
             conv_field_of_view: int | list[int] = 4,
             conv_stride: int | list[int] = 2,
             mlp_channels: int | list[int] = [1],
-
     ):
         super().__init__()
 
@@ -92,6 +91,7 @@ class TransformationPredictor(torch.nn.Module):
     @property
     def in_type(self):
         return self.encoder.fields[0]
+
 
 class ViewClassifierMlp(torch.nn.Module):
 
