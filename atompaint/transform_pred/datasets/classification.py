@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import logging
 
 from .origins import select_origin_filtering_atoms, filter_origin_coords
 from .recording import init_recording, record_training_example, record_img_params
@@ -10,6 +11,8 @@ from atompaint.datasets.voxelize import image_from_atoms
 from torch.utils.data import Dataset
 from escnn.group import GroupElement, so3_group
 from functools import partial
+
+log = logging.getLogger(__name__)
 
 class ViewIndexDataset(Dataset):
 
@@ -46,7 +49,8 @@ class ViewIndexDataset(Dataset):
                             atoms_i,
                         ),
                 )
-            except StopIteration:
+            except StopIteration as stop:
+                log.info("failed to make view pair; tag=%s num_tries=%d", tag, stop.value)
                 continue
 
             # If I want to sample multiple view pairs from the same structure 
@@ -140,7 +144,7 @@ def _sample_view_pairs(rng, origins, frames_ab, origin_params, atoms_i, max_trie
         # I should add some sort of logging to see how often this happens.
         num_tries += 1
         if num_tries > max_tries:
-            return
+            return num_tries
 
 def _filter_views(frame_ia, frames_ab, origin_params, filtering_atoms_i):
     ok_indices = []

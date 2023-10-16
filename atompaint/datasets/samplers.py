@@ -1,4 +1,7 @@
+import logging
 from reprfunc import repr_from_init
+
+log = logging.getLogger(__name__)
 
 class RangeSampler:
 
@@ -40,6 +43,7 @@ class InfiniteSampler:
         return self.epoch_size
 
     def set_epoch(self, epoch):
+        log.info("starting a new epoch; epoch=%d", epoch)
         self.curr_epoch = epoch
 
     __repr__ = repr_from_init
