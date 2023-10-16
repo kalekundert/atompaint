@@ -143,7 +143,7 @@ def _sample_view_pairs(rng, origins, frames_ab, origin_params, atoms_i, max_trie
         # Bail out if it's too hard to find valid view pairs in this structure.  
         # I should add some sort of logging to see how often this happens.
         num_tries += 1
-        if num_tries > max_tries:
+        if num_tries >= max_tries:
             return num_tries
 
 def _filter_views(frame_ia, frames_ab, origin_params, filtering_atoms_i):
