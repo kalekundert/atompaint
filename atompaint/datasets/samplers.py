@@ -26,7 +26,7 @@ class InfiniteSampler:
     should be infinite).
     """
 
-    def __init__(self, epoch_size: int, *, start_index=0, curr_epoch=None):
+    def __init__(self, epoch_size: int, *, start_index=0, curr_epoch=0):
         self.start_index = start_index
         self.epoch_size = epoch_size
         self.curr_epoch = curr_epoch
