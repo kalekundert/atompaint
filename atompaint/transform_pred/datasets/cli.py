@@ -52,7 +52,7 @@ Environment variables:
 """
 
 import docopt
-from .neighbor_count import (
+from .origins import (
         OriginParams, choose_origins_for_tags, save_origins,
         save_origin_params, load_origin_params, consolidate_origins,
 )
