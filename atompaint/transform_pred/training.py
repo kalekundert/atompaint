@@ -158,7 +158,7 @@ class DataModule(pl.LightningDataModule):
 
         i = 0
         j = i + val_epoch_size
-        k = j + train_epoch_size
+        k = j + test_epoch_size
 
         self._val_dataloader = make_dataloader(RangeSampler(i, j))
         self._test_dataloader = make_dataloader(RangeSampler(j, k))
