@@ -1,5 +1,6 @@
 import sqlite3
 import numpy as np
+import pandas as pd
 import json
 import io
 
@@ -147,23 +148,21 @@ def load_all_training_example_ids(db):
     cur.row_factory = _scalar_row_factory
     return cur.fetchall()
 
-def load_validated_training_example_ids(db, min_predictions):
+def load_manual_predictions(db):
     cur = db.execute('''\
-            SELECT example_id FROM (
-                SELECT
-                    man.example_id,
-                    SUM(man.prediction IS ex.b) AS num_successes,
-                    SUM(man.prediction IS NOT ex.b) AS num_failures
-                FROM manual_predictions AS man
-                INNER JOIN training_examples AS ex ON ex.id == man.example_id
-                GROUP BY man.example_id
-            )
-            WHERE num_successes >= ? AND num_failures == 0
+            SELECT
+                man.example_id,
+                SUM(man.prediction IS ex.b) AS num_successes,
+                SUM(man.prediction IS NOT ex.b) AS num_failures
+            FROM manual_predictions AS man
+            INNER JOIN training_examples AS ex ON ex.id == man.example_id
+            GROUP BY man.example_id
             ''',
-            (min_predictions,),
     )
-    cur.row_factory = _scalar_row_factory
-    return cur.fetchall()
+    rows = cur.fetchall()
+    cols = [x for x, *_ in cur.description]
+    return pd.DataFrame(rows, columns=cols)
+
 
 class NotFound(Exception):
     pass

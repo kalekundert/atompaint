@@ -1,5 +1,6 @@
 import atompaint.transform_pred.datasets.recording as ap
 import numpy as np
+import pandas as pd
 import sqlite3
 import pytest
 
@@ -131,20 +132,49 @@ def test_manual_predictions():
 
     i, j = ap.load_all_training_example_ids(db)
 
-    assert ap.load_validated_training_example_ids(db, 1) == []
+    def expected(*rows):
+        return pd.DataFrame(
+                rows,
+                columns=['example_id', 'num_successes', 'num_failures'],
+        )
+
+    pd.testing.assert_frame_equal(
+            ap.load_manual_predictions(db),
+            expected(),
+    )
 
     ap.record_manual_prediction(db, i, 0)
 
-    assert ap.load_validated_training_example_ids(db, 1) == [i]
-    assert ap.load_validated_training_example_ids(db, 2) == []
+    pd.testing.assert_frame_equal(
+            ap.load_manual_predictions(db),
+            expected((i, 1, 0))
+    )
 
-    ap.record_manual_prediction(db, i, 0)
+    ap.record_manual_prediction(db, i, 5)
 
-    assert ap.load_validated_training_example_ids(db, 1) == [i]
-    assert ap.load_validated_training_example_ids(db, 2) == [i]
+    pd.testing.assert_frame_equal(
+            ap.load_manual_predictions(db),
+            expected((i, 1, 1))
+    )
 
     ap.record_manual_prediction(db, i, None)
 
-    assert ap.load_validated_training_example_ids(db, 1) == []
-    assert ap.load_validated_training_example_ids(db, 2) == []
+    pd.testing.assert_frame_equal(
+            ap.load_manual_predictions(db),
+            expected((i, 1, 2))
+    )
+
+    ap.record_manual_prediction(db, j, 5)
+
+    pd.testing.assert_frame_equal(
+            ap.load_manual_predictions(db),
+            expected((i, 1, 2), (j, 1, 0))
+    )
+
+    ap.record_manual_prediction(db, j, 5)
+
+    pd.testing.assert_frame_equal(
+            ap.load_manual_predictions(db),
+            expected((i, 1, 2), (j, 2, 0)),
+    )
 
