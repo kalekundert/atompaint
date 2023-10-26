@@ -44,6 +44,7 @@ class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
             conv_channels: list[int],
             conv_field_of_view: int | list[int],
             conv_stride: int | list[int],
+            conv_padding: int | list[int],
             mlp_channels: int | list[int],
     ):
         super().__init__()
@@ -54,6 +55,7 @@ class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
             conv_channels=conv_channels,
             conv_field_of_view=conv_field_of_view,
             conv_stride=conv_stride,
+            conv_padding=conv_padding,
             mlp_channels=mlp_channels,
         )
         self.loss = CrossEntropyLoss()

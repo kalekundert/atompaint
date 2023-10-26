@@ -28,6 +28,7 @@ class TransformationPredictor(torch.nn.Module):
             conv_channels: list[int] = [1, 1],
             conv_field_of_view: int | list[int] = 4,
             conv_stride: int | list[int] = 2,
+            conv_padding: int | list[int] = 0,
             mlp_channels: int | list[int] = [1],
     ):
         super().__init__()
@@ -36,6 +37,7 @@ class TransformationPredictor(torch.nn.Module):
                 channels=conv_channels,
                 conv_field_of_view=conv_field_of_view,
                 conv_stride=conv_stride,
+                conv_padding=conv_padding,
                 frequencies=frequencies,
         )
         self.mlp = ViewClassifierMlp(

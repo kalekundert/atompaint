@@ -124,6 +124,7 @@ class FourierCnn(EquivariantCnn):
             channels: list[int] = [1, 1],
             conv_field_of_view: int | list[int] = 3,
             conv_stride: int | list[int] = 2,
+            conv_padding: int | list[int] = 0,
             frequencies: int = 2,
     ):
         gspace = rot3dOnR3(frequencies)
@@ -148,6 +149,7 @@ class FourierCnn(EquivariantCnn):
                     out_type,
                     kernel_size=get_scalar(conv_field_of_view, i),
                     stride=get_scalar(conv_stride, i),
+                    padding=get_scalar(conv_padding, i),
 
                     # Batch-normalization will recenter everything on 0, so 
                     # there's no point having a bias just before that.
