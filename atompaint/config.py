@@ -12,11 +12,21 @@ from more_itertools import pairwise
 from dataclasses import dataclass
 from reprfunc import repr_from_init
 
+from typing import Optional
+
 @dataclass
 class Config:
     trainer: pl.Trainer
     model: pl.LightningModule
     data: pl.LightningDataModule
+
+@dataclass
+class ComputeConfig:
+    train_command: Optional[str]
+    num_cpus: int
+    time_h: int
+    memory_gb: int
+
 
 class ConfigError(Exception):
     pass
@@ -49,6 +59,7 @@ class SlurmTimeoutCallback:
 
 def load_config(path, model_cls, data_cls, **trainer_kwargs):
     conf = yaml.safe_load(path.read_text())
+    conf.pop('compute', None)
 
     log_levels = {
             'info': logging.INFO,
@@ -90,4 +101,21 @@ def load_config(path, model_cls, data_cls, **trainer_kwargs):
         raise ConfigError(f"{path}: unexpected keys: {', '.join(map(repr, conf))}")
 
     return Config(trainer, model, data)
+
+def load_compute_config(path):
+    # These config options are read when submitting a job, not when running a 
+    # job.  Loading the main config can take a while, because we have to 
+    # initialize the whole model.
+    conf = yaml.safe_load(path.read_text()).get('compute', {})
+    compute_conf = ComputeConfig(
+            train_command=conf.pop('train_cmd'),
+            num_cpus=conf.pop('cpus', 16),
+            time_h=conf.pop('time_h', 2),
+            memory_gb=conf.pop('memory_gb', 16),
+    )
+
+    if conf:
+        raise ConfigError(f"{path}: unexpected keys: {', '.join(map(repr, conf))}")
+
+    return compute_conf
 
