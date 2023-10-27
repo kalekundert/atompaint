@@ -56,7 +56,7 @@ Environment Variables:
 import os
 import docopt
 
-from atompaint.config import load_compute_config, ConfigError
+from atompaint.config import load_compute_config, require_env
 from subprocess import run
 from pathlib import Path
 
@@ -84,7 +84,7 @@ def main():
             '--open-mode=append',
             '-o', '%x_%j.out',
             '-e', '%x_%j.err',
-            Path(__file__).with_suffix('.sbatch'),
+            Path(__file__).parent / 'train.sbatch',
             c.train_command,
             config_path,
     ]
@@ -93,9 +93,8 @@ def main():
 
     run(sbatch)
 
-def require_env(name):
-    if name not in os.environ:
-        raise ConfigError(f"must define ${name} environment variable")
+
+
 
 if __name__ == '__main__':
     main()

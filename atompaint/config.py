@@ -5,6 +5,8 @@ import torch
 import lightning.pytorch as pl
 import logging
 
+from atompaint.hpc.slurm.utils import is_slurm
+from atompaint.hpc.slurm.requeue import RequeueBeforeTimeLimit
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 from statistics import fmean
@@ -26,7 +28,6 @@ class ComputeConfig:
     num_cpus: int
     time_h: int
     memory_gb: int
-
 
 class ConfigError(Exception):
     pass
@@ -79,8 +80,14 @@ def load_config(path, model_cls, data_cls, **trainer_kwargs):
     prec = trainer_kwargs.pop('float32_precision', 'high')
     torch.set_float32_matmul_precision(prec)
 
+    if is_slurm():
+        hpc_callbacks = [RequeueBeforeTimeLimit()]
+    else:
+        hpc_callbacks = []
+
     trainer = pl.Trainer(
             callbacks=[
+                *hpc_callbacks,
                 ModelCheckpoint(
                     save_last=True,
                     every_n_epochs=1,
@@ -118,4 +125,8 @@ def load_compute_config(path):
         raise ConfigError(f"{path}: unexpected keys: {', '.join(map(repr, conf))}")
 
     return compute_conf
+
+def require_env(name):
+    if name not in os.environ:
+        raise ConfigError(f"must define ${name} environment variable")
 
