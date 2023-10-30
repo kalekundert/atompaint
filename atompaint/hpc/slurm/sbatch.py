@@ -1,12 +1,12 @@
 """\
-Submit a training job on a SLURM cluster, accounting for the following:
+Submit training jobs on a SLURM cluster, accounting for the following:
 
 - Jobs need to run on nodes with A100 GPUs; older GPUs are too slow.
 - Jobs need to configure themselves to requeue when they hit their time limits.
 - Different models need different amounts of memory.
 
 Usage:
-    ap_sbatch <config> [-d]
+    ap_sbatch <config>... [-d]
 
 Arguments:
     <config>
@@ -62,38 +62,38 @@ from pathlib import Path
 
 def main():
     args = docopt.docopt(__doc__)
-    config_path = Path(args['<config>'])
-    c = load_compute_config(config_path)
+    config_paths = [Path(x) for x in args['<config>']]
 
-    require_env('AP_SLURM_GRES')
-    require_env('AP_SLURM_PARTITION')
-    require_env('AP_SLURM_QOS')
-    require_env('AP_SLURM_SETUP_ENV')
+    for config_path in config_paths:
+        c = load_compute_config(config_path)
 
-    sbatch = [
-            'sbatch',
-            '--gres', os.environ['AP_SLURM_GRES'],
-            '--partition', os.environ['AP_SLURM_PARTITION'],
-            '--qos', os.environ['AP_SLURM_QOS'],
-            '--job-name', c.train_command,
-            '--cpus-per-task', str(c.num_cpus),
-            '--time', f'0-{c.time_h}:0',  # {days}-{hours}:{minutes}
-            '--mem', f'{c.memory_gb}G',
-            '--signal', 'B:USR1',
-            '--requeue',
-            '--open-mode=append',
-            '-o', '%x_%j.out',
-            '-e', '%x_%j.err',
-            Path(__file__).parent / 'train.sbatch',
-            c.train_command,
-            config_path,
-    ]
-    if args['--dry-run']:
-        sbatch = ['echo'] + sbatch
+        require_env('AP_SLURM_GRES')
+        require_env('AP_SLURM_PARTITION')
+        require_env('AP_SLURM_QOS')
+        require_env('AP_SLURM_SETUP_ENV')
 
-    run(sbatch)
+        sbatch = [
+                'sbatch',
+                '--gres', os.environ['AP_SLURM_GRES'],
+                '--partition', os.environ['AP_SLURM_PARTITION'],
+                '--qos', os.environ['AP_SLURM_QOS'],
+                '--job-name', c.train_command,
+                '--cpus-per-task', str(c.num_cpus),
+                '--time', f'0-{c.time_h}:0',  # {days}-{hours}:{minutes}
+                '--mem', f'{c.memory_gb}G',
+                '--signal', 'B:USR1',
+                '--requeue',
+                '--open-mode=append',
+                '-o', '%x_%j.out',
+                '-e', '%x_%j.err',
+                Path(__file__).parent / 'train.sbatch',
+                c.train_command,
+                config_path,
+        ]
+        if args['--dry-run']:
+            sbatch = ['echo'] + sbatch
 
-
+        run(sbatch)
 
 
 if __name__ == '__main__':
