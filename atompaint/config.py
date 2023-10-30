@@ -13,8 +13,11 @@ from statistics import fmean
 from more_itertools import pairwise
 from dataclasses import dataclass
 from reprfunc import repr_from_init
+from pathlib import Path
 
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 @dataclass
 class Config:
@@ -59,6 +62,8 @@ class SlurmTimeoutCallback:
     __repr__ = repr_from_init
 
 def load_config(path, model_cls, data_cls, **trainer_kwargs):
+    path = path.resolve()
+
     conf = yaml.safe_load(path.read_text())
     conf.pop('compute', None)
 
@@ -85,6 +90,13 @@ def load_config(path, model_cls, data_cls, **trainer_kwargs):
     else:
         hpc_callbacks = []
 
+    out_dir = os.getenv('AP_TRAIN_OUT_DIR', 'workspace').format(path.parent)
+    out_dir = Path(out_dir).expanduser()
+    if not out_dir.is_absolute():
+        out_dir = path.parent / out_dir
+
+    log.info("reading config; config_path=%s  output_dir=%s", path, out_dir)
+
     trainer = pl.Trainer(
             callbacks=[
                 *hpc_callbacks,
@@ -94,8 +106,8 @@ def load_config(path, model_cls, data_cls, **trainer_kwargs):
                 ),
             ],
             logger=TensorBoardLogger(
-                save_dir=path.parent,
-                name='workspace',
+                save_dir=out_dir.parent,
+                name=out_dir.name,
                 version=path.stem,
                 default_hp_metric=False,
             ),
