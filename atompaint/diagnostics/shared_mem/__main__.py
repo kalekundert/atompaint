@@ -142,7 +142,6 @@ More information:
 import docopt
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.lines as mlines
 import sqlite3
 import sys
 

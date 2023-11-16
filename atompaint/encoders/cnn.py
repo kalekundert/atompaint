@@ -1,18 +1,12 @@
 import torch
 
+from atompaint.utils import get_scalar
+from atompaint.type_hints import LayerFactory
 from escnn.group import Representation
 from escnn.gspaces import icoOnR3, rot3dOnR3, GSpace
 from escnn.nn import *
 from itertools import pairwise
 from more_itertools import all_equal
-
-from .util import get_scalar
-from .type_hints import LayerFactory
-
-# My initial thought was to use the following numbers of latent channels:
-# [16, 64, 256].  However, this caused my laptop to run out of memory.  I'll 
-# have to think more carefully about exactly how many channels I can feasibly 
-# use.
 
 class EquivariantCnn(torch.nn.Module):
     """
@@ -53,7 +47,7 @@ class EquivariantCnn(torch.nn.Module):
         self.fields = list(iter_fields())
         self.layers = SequentialModule(*iter_layers())
 
-    def forward(self, input: torch.Tensor):
+    def forward(self, input: GeometricTensor) -> GeometricTensor:
         """
         Create a latent representation of the given voxelized atom cloud.
 
@@ -68,9 +62,15 @@ class EquivariantCnn(torch.nn.Module):
                 X: number of voxels in each spatial dimension
         """
         assert all_equal(input.shape[-3:])
-
-        input = GeometricTensor(input, self.fields[0])
         return self.layers(input)
+
+    @property
+    def in_type(self):
+        return self.fields[0]
+
+    @property
+    def out_type(self):
+        return self.fields[-1]
 
 class IcosahedralCnn(EquivariantCnn):
     """\

@@ -1,65 +1,33 @@
 import torch
 
-from .fourier import QuotientInverseFourier
-from atompaint.downsample import EquivariantCnn, FourierCnn
-from atompaint.type_hints import LayerFactory
-
+from atompaint.encoders.layers import make_fourier_field_types
+from atompaint.type_hints import Grid, LayerFactory
 from escnn.nn import (
-        SequentialModule, Linear, FourierPointwise, FieldType, GeometricTensor,
-        tensor_directsum,
+        FieldType, FourierFieldType, GeometricTensor, InverseFourierTransform,
+        SequentialModule, Linear, IIDBatchNorm1d, FourierPointwise,
+        tensor_directsum, 
 )
 from escnn.group import GroupElement
 from escnn.gspaces import no_base_space
+from torch.nn import Module
 from itertools import pairwise
-from typing import Any
+from typing import Iterable
 
-class TransformationPredictor(torch.nn.Module):
+class TransformationPredictor(Module):
     """
     Predict the relative orientation of two atom clouds.
-
-    The main purpose of this class is to being easy to configure via Lightning.  
-    That means accepting a limited set of constructor arguments that are all 
-    relatively simple types.
     """
 
     def __init__(
             self, *,
-            frequencies: int = 2,
-            conv_channels: list[int] = [1, 1],
-            conv_field_of_view: int | list[int] = 4,
-            conv_stride: int | list[int] = 2,
-            conv_padding: int | list[int] = 0,
-            mlp_channels: int | list[int] = [1],
+            encoder: Module,
+            classifier: Module,
     ):
         super().__init__()
+        self.encoder = encoder
+        self.classifier = classifier
 
-        self.encoder = FourierCnn(
-                channels=conv_channels,
-                conv_field_of_view=conv_field_of_view,
-                conv_stride=conv_stride,
-                conv_padding=conv_padding,
-                frequencies=frequencies,
-        )
-        self.mlp = ViewClassifierMlp(
-                so3_fields = _parse_mlp_channels(self.encoder, mlp_channels),
-                layer_factory = lambda in_type, out_type: [
-                    Linear(in_type, out_type),
-                    FourierPointwise(
-                        out_type.gspace,
-                        len(out_type) // len(self.encoder.out_repr),
-                        self.encoder.irreps,
-                        # Default grid parameters from SO(3) example:
-                        type='thomson_cube', N=4,
-                    ),
-                ],
-                fourier_irreps = self.encoder.irreps,
-
-                # This has to be the same as the grid used to construct the 
-                # dataset.  For now, I've just hard-coded the 'cube' grid.
-                fourier_grid = self.encoder.gspace.fibergroup.sphere_grid('cube'),
-        )
-
-    def forward(self, input: torch.Tensor):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         """
         Arguments:
             input:
@@ -85,30 +53,52 @@ class TransformationPredictor(torch.nn.Module):
             B: minibatch size
             V: number of possible views
         """
-        latent_0 = self.encoder(input[:,0])
-        latent_1 = self.encoder(input[:,1])
-        latent = _flatten_base_space(tensor_directsum([latent_0, latent_1]))
-        return self.mlp(latent)
+
+        latent = self.encoder(input)
+        return self.classifier(latent)
 
     @property
     def in_type(self):
-        return self.encoder.fields[0]
+        return self.encoder.in_type
+
+class ViewPairEncoder(Module):
+
+    def __init__(self, encoder: Module):
+        super().__init__()
+        self.encoder = encoder
+
+    def forward(self, x: torch.Tensor) -> GeometricTensor:
+        x0 = GeometricTensor(x[:,0], self.encoder.in_type)
+        x1 = GeometricTensor(x[:,1], self.encoder.in_type)
+
+        y0 = self.encoder(x0)
+        y1 = self.encoder(x1)
+
+        return _flatten_base_space(tensor_directsum([y0, y1]))
+
+    @property
+    def in_type(self):
+        return self.encoder.in_type
+
+    @property
+    def out_type(self):
+        out_type = self.encoder.out_type
+        gspace = no_base_space(out_type.gspace.fibergroup)
+        return FieldType(gspace, 2 * out_type.representations)
 
 
-class ViewClassifierMlp(torch.nn.Module):
+class ViewPairClassifier(Module):
 
     def __init__(
             self, *,
-            so3_fields: list[FieldType],
+            layer_types: list[FieldType],
             layer_factory: LayerFactory,
-            fourier_irreps: [Any],
-            fourier_grid: list[GroupElement],
+            logits_max_freq: int,
+            logits_grid: list[GroupElement],
     ):
         super().__init__()
 
-        layers = []
-        for in_type, out_type in pairwise(so3_fields):
-            layers += list(layer_factory(in_type, out_type))
+        self.layer_types = list(layer_types)
 
         # This quotient-space inverse Fourier transform approach requires that 
         # the group being used have SO(2) as a subgroup.  I think that 
@@ -120,28 +110,39 @@ class ViewClassifierMlp(torch.nn.Module):
         # that would add a lot of complexity relating to working out which 
         # basis vectors to ignore.
 
+        gspace = self.layer_types[-1].gspace
         so2_z = False, -1
-        self.inv_fourier_s2 = QuotientInverseFourier(
-                so3_fields[-1].gspace,
-                subgroup_id=so2_z,
+        fourier_type = FourierFieldType(
+                gspace=gspace,
                 channels=1,
-                irreps=fourier_irreps,
-                grid=fourier_grid,
+                bl_irreps=gspace.fibergroup.bl_irreps(logits_max_freq),
+                subgroup_id=so2_z,
         )
 
-        layers += [
-                Linear(so3_fields[-1], self.inv_fourier_s2.in_type),
-        ]
+        layers = []
+        for in_type, out_type in pairwise(self.layer_types):
+            layers += list(layer_factory(in_type, out_type))
 
-        # I thought about including an additional ReLU after converting to 
-        # real-space, but this just throws away information and doesn't add any 
-        # expressiveness:
-        #
-        # https://stats.stackexchange.com/questions/163695/non-linearity-before-final-softmax-layer-in-a-convolutional-neural-network
+        # Convert the last user-specified field type into the field type needed 
+        # for the inverse Fourier transform (IFT).  This is not done using the 
+        # layer factory, because factories are meant to have nonlinearities as 
+        # their last steps, and I don't like the idea of having a nonlinearity 
+        # immediately before the IFT.  Instead, I prefer having the last step 
+        # be a linear classifier based on (presumably) well-engineered latent 
+        # features.
+
+        layers += [
+                Linear(self.layer_types[-1], fourier_type),
+        ]
+        self.layer_types.append(fourier_type)
 
         self.mlp = SequentialModule(*layers)
+        self.inv_fourier_s2 = InverseFourierTransform(
+                in_type=fourier_type,
+                out_grid=logits_grid,
+        )
 
-    def forward(self, input: GeometricTensor):
+    def forward(self, input: GeometricTensor) -> torch.Tensor:
         """
         Arguments:
             input:
@@ -152,63 +153,94 @@ class ViewClassifierMlp(torch.nn.Module):
                 B: minibatch size
                 F: fiber size
 
-                The fiber in question is the one defined by the representation 
-                *in_repr* provided to the constructor.  Note that the tensor 
-                must not have any spatial dimensions remaining.
+                The fiber in question is the one defined by the first field type 
+                provided to the constructor.  Note that the input tensor must 
+                not have any spatial dimensions remaining.
         """
         assert input.tensor.dim() == 2
         x_fourier = self.mlp(input)
-        x_real = self.inv_fourier_s2.forward(x_fourier)
+        x_logits = self.inv_fourier_s2(x_fourier).tensor
+
+        # I thought about applying a nonlinear transformation to the logits, 
+        # but this would just throw away information without adding any 
+        # expressiveness [1].
+        #
+        # [1]: https://stats.stackexchange.com/questions/163695/non-linearity-before-final-softmax-layer-in-a-convolutional-neural-network
 
         # There's only one channel, so get rid of that dimension.
-        b, c, g = x_real.shape
+        b, c, g = x_logits.shape
         assert c == 1
-        return x_real.reshape((b, g))
+        return x_logits.reshape(b, g)
 
-def _parse_mlp_channels(
-        encoder: EquivariantCnn,
-        mlp_channels: list[int] | int,
-) -> list[FieldType]:
+    @property
+    def in_type(self):
+        return self.field_types[0]
+
+def make_fourier_classifier_field_types(
+        in_type: FieldType,
+        channels: int | list[int],
+        max_frequencies: int | list[int],
+) -> Iterable[FieldType]:
     """
-    Make input and output field types for each layer of the MLP, from 
-    parameters that are convenient for end-users to specify.
+    Make input and output field types for each layer of the classifier MLP, 
+    from parameters that are convenient for end-users to specify.
 
     Arguments:
-        encoder:
-            The model used to make a single latent-space encoding of the input.  
-            Note that the actual input to the MLP will be the concatenated 
-            input from two such encoders.
+        in_type:
+            The field type produced by the view pair encoder.  Note that this 
+            field type should combine latent representations for the two views 
+            in question, and should have no spatial dimensions.
 
-        mlp_channels:
+        channels:
             If a list of integers is given, it is interpreted as the number of 
-            channels that should be in each hidden layer of the MLP.  
+            replicates of the spectral regular representation to include in 
+            each field type.
 
             If an integer is given instead, it is interpreted as the number of 
-            hidden layers to create, and each hidden layer will be the same 
-            size as the input layer. This is a rule-of-thumb based on the idea 
-            that (i) the ideal hidden layer size is probably between the input 
-            and output sizes and (ii) it's better to err on the side of making 
-            the hidden layer too big.  A too-big hidden layer will be less 
-            efficient to train, but still capable of learning the necessary 
-            features.  A too-small hidden layer may not give good performance.
+            hidden layers to create.  Each hidden layer will be roughly the 
+            same size as the input layer.  This is a rule-of-thumb based on the 
+            idea that (i) the ideal hidden layer size is probably between the 
+            input and output sizes and (ii) it's better to err on the side of 
+            making the hidden layer too big.  A too-big hidden layer will be 
+            less efficient to train, but still capable of learning the 
+            necessary features.  A too-small hidden layer may not give good 
+            performance.
     
             https://stackoverflow.com/questions/10565868/multi-layer-perceptron-mlp-architecture-criteria-for-choosing-number-of-hidde
-
-    Returns:
-        A list of field types.  An input field type, which is corresponds 
-        exactly to the concatenated outputs from the two encoders, is prepended 
-        to the field types specified by the *mlp_channels* argument.
     """
-    if isinstance(mlp_channels, int):
-        mlp_channels = [2 * encoder.out_channels] * mlp_channels
+    yield in_type
 
-    gspace = no_base_space(encoder.gspace.fibergroup)
-    mlp_fields = [
-            FieldType(gspace, n * encoder.out_repr)
-            for n in [2 * encoder.out_channels] + mlp_channels
-    ]
+    if isinstance(channels, int):
+        ft = next(make_fourier_field_types(
+            gspace=in_type.gspace,
+            channels=[1],
+            max_frequencies=max_frequencies,
+        ))
+        channels = channels * [in_type.size // ft.size]
 
-    return mlp_fields
+    yield from make_fourier_field_types(
+        gspace=in_type.gspace,
+        channels=channels,
+        max_frequencies=max_frequencies,
+    )
+
+def make_linear_fourier_layer(
+        in_type: FieldType,
+        out_type: FourierFieldType,
+        ift_grid: Grid,
+        *,
+        nonlinearity: str = 'p_relu',
+):
+    yield Linear(in_type, out_type, bias=False)
+    yield IIDBatchNorm1d(out_type)
+    yield FourierPointwise(
+            out_type,
+            ift_grid,
+            function=nonlinearity
+    )
+    # If I were going to use drop-out, it'd come after the nonlinearity.  But 
+    # I've seen some comments saying the batch norm and dropout don't work well 
+    # together.
 
 def _flatten_base_space(geom_tensor):
     # TODO: I'd like to contribute this as a method of the `GeometricTensor` 

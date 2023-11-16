@@ -90,7 +90,7 @@ class SharedMemoryProfiler(Profiler):
 
         # Read database
         actions = pd.read_sql('SELECT * FROM actions', self._db)
-        mem_maps = mm = pd.read_sql('SELECT * FROM memory_maps', self._db)
+        mm = pd.read_sql('SELECT * FROM memory_maps', self._db)
 
         # Make summary
         mm = aggregate_file_mmaps(mm)

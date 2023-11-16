@@ -134,7 +134,7 @@ def plot_pss_trace(ax, mm, style, metrics=None):
         )
 
     ax.set_xlabel('time (min)')
-    ax.set_ylabel(f'PSS (GB)')
+    ax.set_ylabel('PSS (GB)')
     ax.set_ylim(bottom=0)
 
     return legend_handles
@@ -288,9 +288,12 @@ def iter_path_groups(df, path_exprs):
         if path_expr in {None, 'all', '[all]'}:
             yield {}, df
         else:
-            keys = {normalize_path(x, mm['path']) for x in expr.split('+')}
-            mask = mm['path'].isin(keys)
-            yield dict(paths=path_expr), mm[mask]
+            keys = {
+                    normalize_path(x, df['path'])
+                    for x in path_expr.split('+')
+            }
+            mask = df['path'].isin(keys)
+            yield dict(paths=path_expr), df[mask]
 
 def normalize_path(path, candidates):
     bracket_path = f'[{path}]'

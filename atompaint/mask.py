@@ -30,7 +30,6 @@ def build_mask(
     mask = torch.zeros(1, 1, *repeat(s, dim), dtype=dtype)
     c = (s-1) / 2
     t = (c - margin/100.*c)**2
-    sig = 2.
     for k in product(range(s), repeat=dim):
         r = sum((x - c)**2 for x in k)
         if r > t:

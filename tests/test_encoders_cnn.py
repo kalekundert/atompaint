@@ -1,6 +1,6 @@
-import atompaint.downsample as apd
 import torch
 
+from atompaint.encoders.cnn import IcosahedralCnn, FourierCnn
 from atompaint.vendored.escnn_nn_testing import check_equivariance
 from utils import *
 
@@ -14,7 +14,7 @@ def test_icosahedral_equivariance():
     # Just use a single channel and the smallest possible fields of view.  
     # That's enough to test equivariance, and keeps the test running fast by 
     # not requiring too much memory.
-    module = apd.IcosahedralCnn(
+    module = IcosahedralCnn(
             channels=[1,1,1],
             conv_field_of_view=3,
             pool_field_of_view=2,
@@ -27,15 +27,13 @@ def test_icosahedral_equivariance():
     # bigger than the convolutional filter.
     check_equivariance(
         module,
-        in_tensor=torch.randn(1, c, 30, 30, 30),
-        in_type=module.fields[0],
-        out_type=module.fields[-1],
+        in_tensor=(1, c, 30, 30, 30),
         group_elements=rots,
         atol=1e-4,
     )
 
 def test_fourier_equivariance():
-    module = apd.FourierCnn(
+    module = FourierCnn(
             channels=[1,1,1],
             conv_field_of_view=3,
     )
@@ -45,9 +43,7 @@ def test_fourier_equivariance():
 
     check_equivariance(
         module,
-        in_tensor=torch.randn(1, c, 23, 23, 23),
-        in_type=module.fields[0],
-        out_type=module.fields[-1],
+        in_tensor=(1, c, 23, 23, 23),
         group_elements=rots,
         atol=1e-4,
     )

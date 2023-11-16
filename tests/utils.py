@@ -34,4 +34,3 @@ def get_exact_rotations(group):
 def integers(params):
     return [int(x) for x in params.split()]
 
-

@@ -15,21 +15,36 @@ Arguments:
 import lightning.pytorch as pl
 import os
 
-from .models import TransformationPredictor
+from .models import (
+        TransformationPredictor, ViewPairEncoder, ViewPairClassifier,
+        make_fourier_classifier_field_types, make_linear_fourier_layer,
+)
 from .datasets.origins import SqliteOriginSampler
 from .datasets.classification import (
         CnnViewIndexDataset, make_cube_face_frames_ab,
 )
-from atompaint.config import load_config
+from atompaint.config import load_train_config
 from atompaint.datasets.voxelize import ImageParams, Grid
 from atompaint.datasets.samplers import RangeSampler, InfiniteSampler
+from atompaint.encoders.cnn import FourierCnn
+from atompaint.encoders.resnet import (
+        ResNet, make_escnn_example_block, make_alpha_block,
+)
+from atompaint.encoders.layers import (
+        make_conv_layer, make_conv_fourier_layer,
+        make_top_level_field_types, make_polynomial_field_types,
+        make_fourier_field_types,
+)
 from atompaint.checkpoints import EvalModeCheckpointMixin
+from atompaint.utils import parse_so3_grid
+from escnn.gspaces import rot3dOnR3
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torchmetrics import Accuracy
 from docopt import docopt
 from pathlib import Path
+from functools import partial
 from typing import Optional
 
 # Not going to use docker/singularity for now.  It'll be good to make a 
@@ -38,29 +53,14 @@ from typing import Optional
 
 class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
 
-    def __init__(
-            self, *,
-            frequencies: int,
-            conv_channels: list[int],
-            conv_field_of_view: int | list[int],
-            conv_stride: int | list[int],
-            conv_padding: int | list[int],
-            mlp_channels: int | list[int],
-    ):
+    def __init__(self, model):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore='model')
 
-        self.model = TransformationPredictor(
-            frequencies=frequencies,
-            conv_channels=conv_channels,
-            conv_field_of_view=conv_field_of_view,
-            conv_stride=conv_stride,
-            conv_padding=conv_padding,
-            mlp_channels=mlp_channels,
-        )
+        self.model = model
         self.loss = CrossEntropyLoss()
         self.accuracy = Accuracy(task='multiclass', num_classes=6)
-        self.optimizer = Adam(self.model.parameters())
+        self.optimizer = Adam(model.parameters())
 
     def on_train_start(self):
         self.logger.log_hyperparams(self.hparams, {"val/loss": 0})
@@ -94,6 +94,162 @@ class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
         self.log('test/loss', loss)
         self.log('test/accuracy', acc)
         return loss
+
+    @property
+    def in_type(self):
+        return self.model.in_type
+
+class CnnPredictorModule(PredictorModule):
+
+    def __init__(
+            self, *,
+            frequencies: int,
+            conv_channels: list[int],
+            conv_field_of_view: int | list[int],
+            conv_stride: int | list[int],
+            conv_padding: int | list[int],
+            mlp_channels: int | list[int],
+    ):
+        encoder = ViewPairEncoder(
+                FourierCnn(
+                    channels=conv_channels,
+                    conv_field_of_view=conv_field_of_view,
+                    conv_stride=conv_stride,
+                    conv_padding=conv_padding,
+                    frequencies=frequencies,
+                ),
+        )
+        so3 = encoder.out_type.fibergroup
+        classifier = ViewPairClassifier(
+                layer_types=make_fourier_classifier_field_types(
+                    in_type=encoder.out_type,
+                    channels=mlp_channels,
+                    max_frequencies=frequencies,
+                ),
+                layer_factory=partial(
+                    make_linear_fourier_layer,
+                    ift_grid=so3.grid('thomson_cube', N=4),
+                ),
+                logits_max_freq=frequencies,
+
+                # This has to be the same as the grid used to construct the # 
+                # dataset.  For now, I've just hard-coded the 'cube' grid.
+                logits_grid=so3.sphere_grid('cube'),
+        )
+        model = TransformationPredictor(
+                encoder=encoder,
+                classifier=classifier,
+        )
+        super().__init__(model)
+
+class ResNetPredictorModule(PredictorModule):
+
+    def __init__(
+            self,
+            *,
+            architecture: str,
+            resnet_outer_channels: list[int],
+            resnet_inner_channels: list[int],
+            polynomial_terms: int | list[int] = 0,
+            max_frequency: int,
+            grid: str,
+            block_repeats: int,
+            pool_factors: int | list[int],
+            final_conv: int = 0,
+            mlp_channels: list[int],
+    ):
+        gspace = rot3dOnR3()
+        so3 = gspace.fibergroup
+        grid = parse_so3_grid(so3, grid)
+
+        if architecture == 'escnn':
+            outer_types = make_top_level_field_types(
+                    gspace=gspace, 
+                    channels=resnet_outer_channels,
+                    make_nontrivial_field_types=partial(
+                        make_polynomial_field_types,
+                        terms=polynomial_terms,
+                    ),
+            )
+            inner_types = make_fourier_field_types(
+                    gspace=gspace, 
+                    channels=resnet_inner_channels,
+                    max_frequencies=max_frequency,
+            )
+            initial_layer_factory = make_conv_layer
+            block_factory = partial(
+                    make_escnn_example_block,
+                    grid=grid,
+            )
+
+        elif architecture == 'alpha':
+            outer_types = make_top_level_field_types(
+                    gspace=gspace, 
+                    channels=resnet_outer_channels,
+                    make_nontrivial_field_types=partial(
+                        make_fourier_field_types,
+                        max_frequencies=max_frequency,
+                    ),
+            )
+            inner_types = make_fourier_field_types(
+                    gspace=gspace, 
+                    channels=resnet_inner_channels,
+                    max_frequencies=max_frequency,
+            )
+            initial_layer_factory = partial(
+                    make_conv_fourier_layer,
+                    ift_grid=grid,
+            )
+            block_factory = partial(
+                    make_alpha_block,
+                    grid=grid,
+            )
+            assert polynomial_terms == 0
+
+        else:
+            raise ValueError(f"unknown architecture: {architecture}")
+
+        if final_conv:
+            final_layer_factory = partial(
+                    make_conv_layer,
+                    kernel_size=final_conv,
+            )
+        else:
+            final_layer_factory = None
+
+        encoder = ViewPairEncoder(
+                ResNet(
+                    outer_types=outer_types,
+                    inner_types=inner_types,
+                    initial_layer_factory=initial_layer_factory,
+                    final_layer_factory=final_layer_factory,
+                    block_factory=block_factory,
+                    block_repeats=block_repeats,
+                    pool_factors=pool_factors,
+                ),
+        )
+        classifier = ViewPairClassifier(
+                layer_types=make_fourier_classifier_field_types(
+                    in_type=encoder.out_type,
+                    channels=mlp_channels,
+                    max_frequencies=max_frequency,
+                ),
+                layer_factory=partial(
+                    make_linear_fourier_layer,
+                    ift_grid=grid,
+                ),
+                logits_max_freq=max_frequency,
+
+                # This has to be the same as the grid used to construct the # 
+                # dataset.  For now, I've just hard-coded the 'cube' grid.
+                logits_grid=so3.sphere_grid('cube'),
+        )
+        model = TransformationPredictor(
+                encoder=encoder,
+                classifier=classifier,
+        )
+        super().__init__(model)
+
 
 class DataModule(pl.LightningDataModule):
 
@@ -183,7 +339,11 @@ class DataModule(pl.LightningDataModule):
 def main():
     args = docopt(__doc__)
     config_path = Path(args['<config>'])
-    c = load_config(config_path, PredictorModule, DataModule)
+    model_factory = {
+            'cnn': CnnPredictorModule,
+            'resnet': ResNetPredictorModule,
+    }
+    c = load_train_config(config_path, model_factory, DataModule)
     c.trainer.fit(c.model, c.data, ckpt_path='last')
 
 if __name__ == '__main__':

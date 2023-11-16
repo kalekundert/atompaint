@@ -13,6 +13,7 @@ from statistics import fmean
 from more_itertools import pairwise
 from dataclasses import dataclass
 from reprfunc import repr_from_init
+from collections.abc import Mapping
 from pathlib import Path
 
 from typing import Optional
@@ -20,7 +21,7 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 @dataclass
-class Config:
+class TrainConfig:
     trainer: pl.Trainer
     model: pl.LightningModule
     data: pl.LightningDataModule
@@ -61,7 +62,7 @@ class SlurmTimeoutCallback:
 
     __repr__ = repr_from_init
 
-def load_config(path, model_cls, data_cls, **trainer_kwargs):
+def load_train_config(path, model_factory, data_factory, **trainer_kwargs):
     path = path.resolve()
 
     conf = yaml.safe_load(path.read_text())
@@ -113,13 +114,20 @@ def load_config(path, model_cls, data_cls, **trainer_kwargs):
             ),
             **trainer_kwargs,
     )
-    model = model_cls(**conf.pop('model'))
-    data = data_cls(**conf.pop('data'))
+
+    model_kwargs = conf.pop('model')
+
+    if isinstance(model_factory, Mapping):
+        key = model_kwargs.pop('architecture')
+        model_factory = model_factory[key]
+
+    model = model_factory(**model_kwargs)
+    data = data_factory(**conf.pop('data'))
 
     if conf:
         raise ConfigError(f"{path}: unexpected keys: {', '.join(map(repr, conf))}")
 
-    return Config(trainer, model, data)
+    return TrainConfig(trainer, model, data)
 
 def load_compute_config(path):
     # These config options are read when submitting a job, not when running a 

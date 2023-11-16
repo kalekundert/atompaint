@@ -15,7 +15,7 @@ classifiers = [
 ]
 dependencies = [
   'docopt',
-  'escnn',
+  'escnn @ git+https://github.com/kalekundert/escnn@2fc44b3dca21fb10ddc4f42bd523ce1d594b81ef',
   'lightning',
   'more_itertools',
   'nestedtext',
@@ -70,6 +70,8 @@ ignore = ["F405", "F403"]
 [tool.pytest.ini_options]
 addopts = "--doctest-modules --doctest-glob='*.rst'"
 doctest_optionflags = 'NORMALIZE_WHITESPACE'
+filterwarnings = 'ignore:.*Lazy modules are a new feature.*:UserWarning:torch.nn.modules.lazy'
+
 
 [tool.coverage.run]
 branch = true

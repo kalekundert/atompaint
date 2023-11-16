@@ -5,16 +5,22 @@ import parametrize_from_file as pff
 
 from test_datasets_coords import coords, vector
 from test_transform_pred_datasets_classification import check_origins
-from atompaint.transform_pred.datasets.classification import make_view_frames_ab
-from escnn.nn import FieldType, GeometricTensor
+from atompaint.transform_pred.models import (
+        ViewPairEncoder, ViewPairClassifier,
+        make_fourier_classifier_field_types, make_linear_fourier_layer,
+)
+from atompaint.transform_pred.datasets.classification import (
+        make_view_frames_ab,
+)
+from atompaint.encoders.cnn import FourierCnn
+from atompaint.vendored.escnn_nn_testing import get_exact_3d_rotations
+from escnn.nn import FieldType, FourierFieldType, GeometricTensor
 from escnn.gspaces import no_base_space
 from escnn.group import SO3, so3_group
 from scipy.spatial.transform import Rotation
 from math import radians
 from functools import partial
 from utils import *
-
-with_ap = pff.Namespace('from atompaint.transform_pred import *')
 
 def classifier_equivariance(*, require_grids=None):
 
@@ -53,61 +59,70 @@ def classifier_equivariance(*, require_grids=None):
     return schema
 
 
-@pff.parametrize(
-        key='test_classifier_equivariance',
-        schema=classifier_equivariance(require_grids=['cube']),
-)
-def test_transform_pred_equivariance(inputs):
-    _, _, _, g, g_permut = inputs()
-
-    transform_pred = ap.TransformationPredictor(
-            frequencies=1,
-            conv_channels=[1, 1, 1, 1],
+def test_view_pair_encoder_equivariance():
+    cnn = FourierCnn(
+            channels=[1, 1, 1, 1],
             conv_field_of_view=3,
-            conv_stride=2,
-            mlp_channels=[1],
+            conv_stride=1,
+            conv_padding=0,
+            frequencies=2,
     )
+    encoder = ViewPairEncoder(cnn)
 
-    # The input has an extra "view" dimension that it's incompatible with the 
-    # transformation functions provided by escnn.  We work around this by 
-    # putting the regions in the batch dimension and reshaping after the 
-    # transformation.
-    img_shape = 1, 15, 15, 15
-    x0 = torch.randn(2, *img_shape)
-    x = x0.reshape(1, 2, *img_shape)
+    in_type = encoder.in_type
+    so3 = in_type.fibergroup
 
-    f_x = transform_pred(x)
-    gf_x = f_x[:, g_permut]
+    x = torch.randn(1, 2, 1, 7, 7, 7)
 
-    gx = transform_pred.in_type.transform(x0, g).reshape(1, 2, *img_shape)
-    f_gx = transform_pred(gx)
+    for g in get_exact_3d_rotations(so3):
+        f_x = encoder(x)
+        gf_x = f_x.transform(g)
 
-    torch.testing.assert_close(gf_x, f_gx)
+        # The input has too many dimensions to transform, due to the addition 
+        # of a dimension to distinguish between the two views (this is the 
+        # second dimension).  Here we work around that by temporarily removing 
+        # the first dimension, so that the "view" dimension will be treated as 
+        # the minibatch dimension.  This works because there's only 1 
+        # minibatch; if there were more we'd have to do some fancier reshaping.
+        gx = in_type.transform(x[0], g).reshape(*x.shape)
+        f_gx = encoder(gx)
+
+        assert f_x.shape == (1, 70)
+        assert f_gx.shape == (1, 70)
+        assert gf_x.shape == (1, 70)
+
+        torch.testing.assert_close(gf_x.tensor, f_gx.tensor)
 
 @pff.parametrize(
         key='test_classifier_equivariance',
         schema=classifier_equivariance(),
 )
-def test_view_classifier_mlp_equivariance(inputs):
+def test_view_pair_classifier_equivariance(inputs):
     so3, _, grid, g, g_permut = inputs()
 
     gspace = no_base_space(so3)
-    irreps = so3.bl_irreps(1)
-    fourier_repr = so3.spectral_regular_representation(*irreps)
-    so3_fields = [
-            FieldType(gspace, [fourier_repr]),
-    ]
-    layer_factory = lambda in_type, out_type: [Linear(in_type, out_type)]
-
-    mlp = ap.ViewClassifierMlp(
-            so3_fields=so3_fields,
-            layer_factory=layer_factory,
-            fourier_irreps=irreps,
-            fourier_grid=grid,
+    max_freq = 2
+    in_type = FourierFieldType(
+            gspace=gspace,
+            channels=2,
+            bl_irreps=so3.bl_irreps(max_freq),
+    )
+    mlp = ViewPairClassifier(
+            layer_types=make_fourier_classifier_field_types(
+                in_type=in_type,
+                channels=1,
+                max_frequencies=max_freq,
+            ),
+            layer_factory=partial(
+                make_linear_fourier_layer,
+                ift_grid=so3.grid('thomson_cube', 4),
+            ),
+            logits_max_freq=max_freq,
+            logits_grid=grid,
     )
 
-    x = torch.randn(1, so3_fields[0].size)
-    x = GeometricTensor(x, so3_fields[0])
+    x = torch.randn(2, 70)
+    x = GeometricTensor(x, in_type)
 
     f_x = mlp.forward(x)
     gf_x = f_x[:, g_permut]
