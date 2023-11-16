@@ -41,6 +41,8 @@ test = [
   'pytest_unordered',
   'parametrize_from_file',
   'hypothesis',
+  'matplotlib',
+  'colorcet',
 ]
 doc = [
   'sphinx',
