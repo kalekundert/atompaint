@@ -147,7 +147,7 @@ class ResNetPredictorModule(PredictorModule):
     def __init__(
             self,
             *,
-            architecture: str,
+            block_type: str,
             resnet_outer_channels: list[int],
             resnet_inner_channels: list[int],
             polynomial_terms: int | list[int] = 0,
@@ -160,9 +160,9 @@ class ResNetPredictorModule(PredictorModule):
     ):
         gspace = rot3dOnR3()
         so3 = gspace.fibergroup
-        grid = parse_so3_grid(so3, grid)
+        grid_elements = parse_so3_grid(so3, grid)
 
-        if architecture == 'escnn':
+        if block_type == 'escnn':
             outer_types = make_top_level_field_types(
                     gspace=gspace, 
                     channels=resnet_outer_channels,
@@ -179,10 +179,10 @@ class ResNetPredictorModule(PredictorModule):
             initial_layer_factory = make_conv_layer
             block_factory = partial(
                     make_escnn_example_block,
-                    grid=grid,
+                    grid=grid_elements,
             )
 
-        elif architecture == 'alpha':
+        elif block_type == 'alpha':
             outer_types = make_top_level_field_types(
                     gspace=gspace, 
                     channels=resnet_outer_channels,
@@ -198,16 +198,16 @@ class ResNetPredictorModule(PredictorModule):
             )
             initial_layer_factory = partial(
                     make_conv_fourier_layer,
-                    ift_grid=grid,
+                    ift_grid=grid_elements,
             )
             block_factory = partial(
                     make_alpha_block,
-                    grid=grid,
+                    grid=grid_elements,
             )
             assert polynomial_terms == 0
 
         else:
-            raise ValueError(f"unknown architecture: {architecture}")
+            raise ValueError(f"unknown block type: {block_type}")
 
         if final_conv:
             final_layer_factory = partial(
@@ -236,7 +236,7 @@ class ResNetPredictorModule(PredictorModule):
                 ),
                 layer_factory=partial(
                     make_linear_fourier_layer,
-                    ift_grid=grid,
+                    ift_grid=grid_elements,
                 ),
                 logits_max_freq=max_frequency,
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from atompaint.pooling import FourierExtremePool3D
-from atompaint.nonlinearities import SetFourierFieldType, add_gates
+from atompaint.nonlinearities import (
+        SetFourierFieldType, add_gates, leaky_hard_shrink,
+)
 from atompaint.utils import identity
 from escnn.nn import (
         FieldType, GeometricTensor,
@@ -201,13 +203,10 @@ def make_alpha_block(
                 f := GatedNonLinearity1(gate_type),
                 SetFourierFieldType(f.out_type, mid_type),
             ),
-            out_nonlinearity=SequentialModule(
-                FourierPointwise(
-                    in_type=out_type,
-                    grid=grid,
-                    function=lambda x: x**3,
-                ),
-                IIDBatchNorm3d(out_type),
+            out_nonlinearity=FourierPointwise(
+                in_type=out_type,
+                grid=grid,
+                function=leaky_hard_shrink,
             ),
             pool=pool,
             pool_before_conv=True,

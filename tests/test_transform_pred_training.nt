@@ -16,7 +16,7 @@ test_predictor_equivariance:
     id: resnet-escnn-example
     model:
       > ResNetPredictorModule(
-      >     architecture='escnn',
+      >     block_type='escnn',
       >     resnet_outer_channels=[6, 2, 2, 2],
       >     resnet_inner_channels=[2],
       >     polynomial_terms=[3, 4, 4],
@@ -33,7 +33,7 @@ test_predictor_equivariance:
     id: resnet-alpha
     model:
       > ResNetPredictorModule(
-      >     architecture='alpha',
+      >     block_type='alpha',
       >     resnet_outer_channels=[6, 2, 2],
       >     resnet_inner_channels=[2],
       >     max_frequency=2,
