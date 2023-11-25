@@ -8,7 +8,7 @@ from escnn.nn import (
 from torch.nn import Module, ModuleList, Sequential
 from more_itertools import pairwise, all_equal
 
-from atompaint.type_hints import LayerFactory, ModuleFactory
+from atompaint.type_hints import LayerFactory, ModuleFactory, PoolFactory
 from typing import TypeAlias, Iterable, Optional, Callable
 
 GrowthTypeFactory: TypeAlias = Callable[[int], FieldType]
@@ -24,7 +24,8 @@ class DenseNet(Module):
             final_layer_factory: Optional[LayerFactory],
             nonlin1_factory: ModuleFactory,
             nonlin2_factory: ModuleFactory,
-            pool_factory: ModuleFactory,
+            pool_factory: PoolFactory,
+            pool_factors: int | list[int],
             block_depth: int | list[int],
     ):
         """
@@ -89,7 +90,10 @@ class DenseNet(Module):
                         stride=1,
                         padding=0,
                 )
-                yield pool_factory(out_type)
+                yield pool_factory(
+                        out_type,
+                        get_scalar(pool_factors, i),
+                )
 
             if final_layer_factory:
                 yield from final_layer_factory(*final_types)

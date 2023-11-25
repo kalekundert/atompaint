@@ -272,6 +272,7 @@ class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
             grid: str,
             max_frequency: int,
             block_depth: int,
+            pool_factors: int | list[int],
             final_conv: int = 0,
             mlp_channels: list[int],
     ):
@@ -328,11 +329,13 @@ class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
                         grid=grid_elements,
                         function=leaky_hard_shrink,
                     ),
-                    pool_factory=partial(
-                        FourierExtremePool3D,
-                        grid=grid_elements,
-                        kernel_size=2,
-                    ),
+                    pool_factory=lambda in_type, pool_factor: \
+                            FourierExtremePool3D(
+                                in_type,
+                                grid=grid_elements,
+                                kernel_size=pool_factor,
+                            ),
+                    pool_factors=pool_factors,
                     block_depth=block_depth,
                 ),
         )

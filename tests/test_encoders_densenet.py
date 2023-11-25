@@ -63,11 +63,13 @@ def test_densenet_equivariance():
                 grid=grid,
                 function=leaky_hard_shrink,
             ),
-            pool_factory=partial(
-                FourierExtremePool3D,
-                grid=grid,
-                kernel_size=2,
-            ),
+            pool_factory=lambda in_type, pool_factor: \
+                    FourierExtremePool3D(
+                        in_type,
+                        grid=grid,
+                        kernel_size=pool_factor,
+                    ),
+            pool_factors=2,
             block_depth=2,
     )
 

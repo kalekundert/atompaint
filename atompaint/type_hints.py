@@ -15,6 +15,10 @@ ConvFactory: TypeAlias = Callable[
         [FieldType, FieldType],
         Module,
 ]
+PoolFactory: TypeAlias = Callable[
+        [FieldType, int],
+        Module,
+]
 LayerFactory: TypeAlias = Callable[
         [FieldType, FieldType],
         Iterable[Module],

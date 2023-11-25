@@ -48,6 +48,7 @@ test_predictor_equivariance:
       transition_channels: [6, 2, 2]
       growth_channels: 1
       block_depth: 2
+      pool_factors: 2
       grid: 'thomson_cube_96'
       max_frequency: 2
       mlp_channels: 1
