@@ -206,7 +206,7 @@ class SqliteOriginSampler:
 
     def sample(self, rng):
         cur = self.db.cursor()
-        i = rng.integers(self.num_origins + 1, dtype=int)
+        i = rng.integers(self.num_origins, dtype=int) + 1
 
         tag_id, *origin_a = cur.execute(self.select_origin_a, (i,)).fetchone()
         tag, = cur.execute(self.select_tag, (tag_id,)).fetchone()
