@@ -1,7 +1,8 @@
 from escnn.nn import (
         FieldType, FourierFieldType,
-        R3Conv, IIDBatchNorm3d, FourierPointwise,
+        R3Conv, IIDBatchNorm3d, FourierPointwise, GatedNonLinearity1,
 )
+from atompaint.nonlinearities import add_gates
 from atompaint.utils import get_scalar
 from atompaint.type_hints import Grid
 from more_itertools import take
@@ -54,18 +55,22 @@ def make_conv_fourier_layer(
             function=nonlinearity,
     )
 
+def make_gated_nonlinearity(out_type):
+    in_type = add_gates(out_type)
+    return GatedNonLinearity1(in_type)
+
 def make_top_level_field_types(gspace, channels, make_nontrivial_field_types):
     group = gspace.fibergroup
     yield FieldType(gspace, channels[0] * [group.trivial_representation])
     yield from make_nontrivial_field_types(gspace, channels[1:])
 
-def make_fourier_field_types(gspace, channels, max_frequencies):
+def make_fourier_field_types(gspace, channels, max_frequencies, **kwargs):
     group = gspace.fibergroup
 
     for i, channels_i in enumerate(channels):
         max_freq = get_scalar(max_frequencies, i)
         bl_irreps = group.bl_irreps(max_freq)
-        yield FourierFieldType(gspace, channels_i, bl_irreps)
+        yield FourierFieldType(gspace, channels_i, bl_irreps, **kwargs)
 
 def make_polynomial_field_types(gspace, channels, terms):
     for i, channels_i in enumerate(channels):

@@ -53,7 +53,6 @@ class TransformationPredictor(Module):
             B: minibatch size
             V: number of possible views
         """
-
         latent = self.encoder(input)
         return self.classifier(latent)
 
@@ -174,7 +173,7 @@ class ViewPairClassifier(Module):
 
     @property
     def in_type(self):
-        return self.field_types[0]
+        return self.layer_types[0]
 
 def make_fourier_classifier_field_types(
         in_type: FieldType,

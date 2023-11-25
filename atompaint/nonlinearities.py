@@ -1,3 +1,4 @@
+import torch
 import torch.nn.functional as F
 import numpy as np
 
@@ -37,7 +38,6 @@ class SetFourierFieldType(EquivariantModule):
 
     def evaluate_output_shape(self, input_shape):
         return input_shape
-
 
 def add_gates(in_type):
     gspace = in_type.gspace

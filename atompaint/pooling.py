@@ -115,12 +115,12 @@ class FourierAvgPool3D(torch.nn.Module):
         x_wrap = self.ift(x_hat_wrap)
 
         b, c, g, *xyz = x_wrap.tensor.shape
-        x = x_wrap.tensor.view(b, c*g, *xyz)
+        x = x_wrap.tensor.reshape(b, c*g, *xyz)
 
         y = self.blur(x)
 
         b, _, *xyz = y.shape
-        y = y.view(b, c, g, *xyz)
+        y = y.reshape(b, c, g, *xyz)
         y_wrap = GridTensor(y, x_wrap.grid, x_wrap.coords)
 
         return self.ft(y_wrap)

@@ -30,13 +30,19 @@ from atompaint.encoders.cnn import FourierCnn
 from atompaint.encoders.resnet import (
         ResNet, make_escnn_example_block, make_alpha_block,
 )
+from atompaint.encoders.densenet import (
+        DenseNet, make_fourier_growth_type,
+)
 from atompaint.encoders.layers import (
-        make_conv_layer, make_conv_fourier_layer,
+        make_conv_layer, make_conv_fourier_layer, make_gated_nonlinearity,
         make_top_level_field_types, make_polynomial_field_types,
         make_fourier_field_types,
 )
+from atompaint.pooling import FourierExtremePool3D
+from atompaint.nonlinearities import leaky_hard_shrink
 from atompaint.checkpoints import EvalModeCheckpointMixin
 from atompaint.utils import parse_so3_grid
+from escnn.nn import FourierPointwise
 from escnn.gspaces import rot3dOnR3
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
@@ -51,6 +57,8 @@ from typing import Optional
 # container when I'm not making changes to atompaint anymore, but until then, 
 # I'd have to make a new container for every commit.  
 
+PREDICTOR_MODULES = {}
+
 class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
 
     def __init__(self, model):
@@ -61,6 +69,10 @@ class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
         self.loss = CrossEntropyLoss()
         self.accuracy = Accuracy(task='multiclass', num_classes=6)
         self.optimizer = Adam(model.parameters())
+
+    def __init_subclass__(cls, *, factory_key, **kwargs):
+        super().__init_subclass__(**kwargs)
+        PREDICTOR_MODULES[factory_key] = cls
 
     def on_train_start(self):
         self.logger.log_hyperparams(self.hparams, {"val/loss": 0})
@@ -99,7 +111,7 @@ class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
     def in_type(self):
         return self.model.in_type
 
-class CnnPredictorModule(PredictorModule):
+class CnnPredictorModule(PredictorModule, factory_key='cnn'):
 
     def __init__(
             self, *,
@@ -132,7 +144,7 @@ class CnnPredictorModule(PredictorModule):
                 ),
                 logits_max_freq=frequencies,
 
-                # This has to be the same as the grid used to construct the # 
+                # This has to be the same as the grid used to construct the 
                 # dataset.  For now, I've just hard-coded the 'cube' grid.
                 logits_grid=so3.sphere_grid('cube'),
         )
@@ -142,7 +154,7 @@ class CnnPredictorModule(PredictorModule):
         )
         super().__init__(model)
 
-class ResNetPredictorModule(PredictorModule):
+class ResNetPredictorModule(PredictorModule, factory_key='resnet'):
 
     def __init__(
             self,
@@ -240,7 +252,7 @@ class ResNetPredictorModule(PredictorModule):
                 ),
                 logits_max_freq=max_frequency,
 
-                # This has to be the same as the grid used to construct the # 
+                # This has to be the same as the grid used to construct the 
                 # dataset.  For now, I've just hard-coded the 'cube' grid.
                 logits_grid=so3.sphere_grid('cube'),
         )
@@ -250,6 +262,101 @@ class ResNetPredictorModule(PredictorModule):
         )
         super().__init__(model)
 
+class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
+
+    def __init__(
+            self,
+            *,
+            transition_channels: list[int],
+            growth_channels: int,
+            grid: str,
+            max_frequency: int,
+            block_depth: int,
+            final_conv: int = 0,
+            mlp_channels: list[int],
+    ):
+        gspace = rot3dOnR3()
+        so3 = gspace.fibergroup
+        grid_elements = parse_so3_grid(so3, grid)
+
+        # Things that are hard-coded for now:
+        #
+        # - Using spectral regular representations at all levels.  Where 
+        #   Fourier transforms are required, I could also try spectral induced 
+        #   representations (i.e. quotient space Fourier transforms).  
+        #   Everywhere else, I could try polynomial representations.
+        #
+        # - Using the same max frequency everywhere.
+        #
+        # - Dense layer nonlinearities: gated first, Fourier second.  It might 
+        #   be better to use only one or the other, or even something else.
+
+        if final_conv:
+            final_layer_factory = partial(
+                    make_conv_layer,
+                    kernel_size=final_conv,
+            )
+        else:
+            final_layer_factory = None
+
+        encoder = ViewPairEncoder(
+                DenseNet(
+                    transition_types=make_top_level_field_types(
+                        gspace=gspace,
+                        channels=transition_channels,
+                        make_nontrivial_field_types=partial(
+                            make_fourier_field_types,
+                            max_frequencies=max_frequency,
+                            unpack=True,
+                        ),
+                    ),
+                    growth_type_factory=partial(
+                        make_fourier_growth_type,
+                        gspace=gspace,
+                        channels=growth_channels,
+                        max_frequency=max_frequency,
+                        unpack=True,
+                    ),
+                    initial_layer_factory=partial(
+                            make_conv_fourier_layer,
+                            ift_grid=grid_elements,
+                    ),
+                    final_layer_factory=final_layer_factory,
+                    nonlin1_factory=make_gated_nonlinearity,
+                    nonlin2_factory=partial(
+                        FourierPointwise,
+                        grid=grid_elements,
+                        function=leaky_hard_shrink,
+                    ),
+                    pool_factory=partial(
+                        FourierExtremePool3D,
+                        grid=grid_elements,
+                        kernel_size=2,
+                    ),
+                    block_depth=block_depth,
+                ),
+        )
+        classifier = ViewPairClassifier(
+                layer_types=make_fourier_classifier_field_types(
+                    in_type=encoder.out_type,
+                    channels=mlp_channels,
+                    max_frequencies=max_frequency,
+                ),
+                layer_factory=partial(
+                    make_linear_fourier_layer,
+                    ift_grid=grid_elements,
+                ),
+                logits_max_freq=max_frequency,
+
+                # This has to be the same as the grid used to construct the 
+                # dataset.  For now, I've just hard-coded the 'cube' grid.
+                logits_grid=so3.sphere_grid('cube'),
+        )
+        model = TransformationPredictor(
+                encoder=encoder,
+                classifier=classifier,
+        )
+        super().__init__(model)
 
 class DataModule(pl.LightningDataModule):
 
@@ -339,12 +446,13 @@ class DataModule(pl.LightningDataModule):
 def main():
     args = docopt(__doc__)
     config_path = Path(args['<config>'])
-    model_factory = {
-            'cnn': CnnPredictorModule,
-            'resnet': ResNetPredictorModule,
-    }
-    c = load_train_config(config_path, model_factory, DataModule)
+    c = load_train_config(config_path, predictor_factory, DataModule)
     c.trainer.fit(c.model, c.data, ckpt_path='last')
+
+def predictor_factory(**kwargs):
+    factory_key = kwargs.pop('architecture', 'cnn')
+    factory = PREDICTOR_MODULES[factory_key]
+    return factory(**kwargs)
 
 if __name__ == '__main__':
     main()

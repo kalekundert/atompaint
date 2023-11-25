@@ -2,45 +2,54 @@ test_predictor_equivariance:
   -
     id: cnn
     model:
-      > CnnPredictorModule(
-      >     conv_channels=[6, 2, 2],
-      >     conv_field_of_view=3,
-      >     conv_stride=1,
-      >     conv_padding=0,
-      >     frequencies=2,
-      >     mlp_channels=1,
-      > )
+      architecture: 'cnn'
+      conv_channels: [6, 2, 2]
+      conv_field_of_view: 3
+      conv_stride: 1
+      conv_padding: 0
+      frequencies: 2
+      mlp_channels: 1
     in_shape: 2, 2, 6, 5, 5, 5
     out_shape: 2, 6
   -
     id: resnet-escnn-example
     model:
-      > ResNetPredictorModule(
-      >     block_type='escnn',
-      >     resnet_outer_channels=[6, 2, 2, 2],
-      >     resnet_inner_channels=[2],
-      >     polynomial_terms=[3, 4, 4],
-      >     max_frequency=2,
-      >     grid='thomson_cube_96',
-      >     block_repeats=1,
-      >     pool_factors=2,
-      >     final_conv=3,
-      >     mlp_channels=1,
-      > )
+      architecture: 'resnet'
+      block_type: 'escnn'
+      resnet_outer_channels: [6, 2, 2, 2]
+      resnet_inner_channels: [2]
+      polynomial_terms: [3, 4, 4]
+      max_frequency: 2
+      grid: 'thomson_cube_96'
+      block_repeats: 1
+      pool_factors: 2
+      final_conv: 3
+      mlp_channels: 1
     in_shape: 2, 2, 6, 7, 7, 7
     out_shape: 2, 6
   -
     id: resnet-alpha
     model:
-      > ResNetPredictorModule(
-      >     block_type='alpha',
-      >     resnet_outer_channels=[6, 2, 2],
-      >     resnet_inner_channels=[2],
-      >     max_frequency=2,
-      >     grid='thomson_cube_96',
-      >     block_repeats=1,
-      >     pool_factors=2,
-      >     mlp_channels=1,
-      > )
+      architecture: 'resnet'
+      block_type: 'alpha'
+      resnet_outer_channels: [6, 2, 2]
+      resnet_inner_channels: [2]
+      max_frequency: 2
+      grid: 'thomson_cube_96'
+      block_repeats: 1
+      pool_factors: 2
+      mlp_channels: 1
+    in_shape: 2, 2, 6, 4, 4, 4
+    out_shape: 2, 6
+  -
+    id: densenet
+    model:
+      architecture: 'densenet'
+      transition_channels: [6, 2, 2]
+      growth_channels: 1
+      block_depth: 2
+      grid: 'thomson_cube_96'
+      max_frequency: 2
+      mlp_channels: 1
     in_shape: 2, 2, 6, 4, 4, 4
     out_shape: 2, 6

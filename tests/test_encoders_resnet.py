@@ -19,7 +19,7 @@ def test_escnn_example_resnet_equivariance():
 
     # Use the same grid and frequency band limit as I intend to use in real 
     # applications.  These parameters can affect how well equivariance is 
-    # approximated, so I want to test reasonably values.
+    # approximated, so I want to test reasonable values.
     grid = so3.grid('thomson_cube', N=4)
     L = 2
 

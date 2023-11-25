@@ -13,7 +13,6 @@ from statistics import fmean
 from more_itertools import pairwise
 from dataclasses import dataclass
 from reprfunc import repr_from_init
-from collections.abc import Mapping
 from pathlib import Path
 
 from typing import Optional
@@ -115,13 +114,7 @@ def load_train_config(path, model_factory, data_factory, **trainer_kwargs):
             **trainer_kwargs,
     )
 
-    model_kwargs = conf.pop('model')
-
-    if isinstance(model_factory, Mapping):
-        key = model_kwargs.pop('architecture')
-        model_factory = model_factory[key]
-
-    model = model_factory(**model_kwargs)
+    model = model_factory(**conf.pop('model'))
     data = data_factory(**conf.pop('data'))
 
     if conf:

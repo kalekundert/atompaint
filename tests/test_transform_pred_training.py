@@ -2,7 +2,7 @@ import torch
 import parametrize_from_file as pff
 
 from test_transform_pred_models import classifier_equivariance
-from atompaint.transform_pred.training import ResNetPredictorModule
+from atompaint.transform_pred.training import predictor_factory
 from atompaint.vendored.escnn_nn_testing import (
         check_equivariance, get_exact_3d_rotations,
 )
@@ -12,7 +12,7 @@ with_ap = pff.Namespace('from atompaint.transform_pred.training import *')
 
 @pff.parametrize(
         schema=pff.cast(
-            model=with_ap.eval(defer=True),
+            model=with_py.eval,
             in_shape=with_py.eval,
             out_shape=with_py.eval,
         ),
@@ -23,10 +23,12 @@ with_ap = pff.Namespace('from atompaint.transform_pred.training import *')
 
         # We currently have the "cube" grid hard-coded into the predictors, so 
         # we can only handle test cases with this exact grid.
-        schema=classifier_equivariance(require_grids=['cube']),
+        schema=[
+            classifier_equivariance(require_grids=['cube']),
+        ],
 )
 def test_predictor_equivariance(model, in_shape, out_shape, inputs):
-    model = model().model
+    model = predictor_factory(**model).model
     _, _, _, g, g_permut = inputs()
 
     b, v, *img_shape = in_shape
