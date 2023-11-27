@@ -271,7 +271,7 @@ class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
             growth_channels: int,
             grid: str,
             max_frequency: int,
-            block_depth: int,
+            block_depth: int | list[int],
             pool_factors: int | list[int],
             final_conv: int = 0,
             mlp_channels: list[int],
