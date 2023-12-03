@@ -60,9 +60,11 @@ def make_gated_nonlinearity(out_type):
     return GatedNonLinearity1(in_type)
 
 def make_top_level_field_types(gspace, channels, make_nontrivial_field_types):
-    group = gspace.fibergroup
-    yield FieldType(gspace, channels[0] * [group.trivial_representation])
+    yield make_trivial_field_type(gspace, channels[0])
     yield from make_nontrivial_field_types(gspace, channels[1:])
+
+def make_trivial_field_type(gspace, channels):
+    return FieldType(gspace, channels * [gspace.trivial_repr])
 
 def make_fourier_field_types(gspace, channels, max_frequencies, **kwargs):
     group = gspace.fibergroup
