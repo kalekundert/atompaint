@@ -37,8 +37,8 @@ class TestCases:
         # (e.g. geometric tensors, normal tensors, custom objects, etc.), so we 
         # try to avoid interpreting the *in_tensor* argument too much.  The one 
         # exception we make is the treat a tuple as the shape of a geometric 
-        # tensor to construct, just be cause this is probably the most common 
-        # scenario and it save the user a good amount of boilerplate.
+        # tensor to construct, just because this is probably the most common 
+        # scenario and it saves the user a good amount of boilerplate.
         #
         # Note that when the user specifies a shape, we require that they 
         # specify all dimensions, even though we already know what the channel 
@@ -60,23 +60,25 @@ class TestCases:
         self.out_type = out_type
         self.out_shape = out_shape
 
-        assert in_type.gspace.fibergroup is out_type.gspace.fibergroup
         self.group = in_type.gspace.fibergroup
-
         self.group_elements = _pick_group_elements(self.group, group_elements)
 
 class TestResult:
 
-    def __init__(self, g, out_eq, out_shape, plots):
+    def __init__(self, g, out_eq, out_shape, in_plots, out_plots):
         self.g = g
         self.out_eq = tuple(
                 _numpy_from_tensor(x)
                 for x in out_eq
         )
         self.out_shape = out_shape
-        self.plots = [
+        self.in_plots = [
                 (_numpy_from_tensor(x), label)
-                for x, label in plots
+                for x, label in in_plots
+        ]
+        self.out_plots = [
+                (_numpy_from_tensor(x), label)
+                for x, label in out_plots
         ]
 
 def check_invariance(
@@ -89,6 +91,7 @@ def check_invariance(
         atol: float = ATOL_DEFAULT,
         rtol: float = RTOL_DEFAULT,
         plot: bool = False,
+        plot_inputs: bool = True,
         **plot_kwargs,
 ):
     cases = TestCases(
@@ -105,6 +108,7 @@ def check_invariance(
             atol=atol,
             rtol=rtol,
             plot=plot,
+            plot_inputs=plot_inputs,
             **plot_kwargs,
     )
 
@@ -119,6 +123,7 @@ def check_equivariance(
         atol: float = ATOL_DEFAULT,
         rtol: float = RTOL_DEFAULT,
         plot: bool = False,
+        plot_inputs: bool = True,
         **plot_kwargs,
 ):
     cases = TestCases(
@@ -135,6 +140,7 @@ def check_equivariance(
             atol=atol,
             rtol=rtol,
             plot=plot,
+            plot_inputs=plot_inputs,
             **plot_kwargs,
     )
 
@@ -178,7 +184,7 @@ def imshow_nd(xs, *, fig=None, row_labels=[], norm_groups=[], max_batches=0, max
     Plot tensors with batch, channel, and any number of spatial dimensions.
     """
 
-    xs = [_numpy_from_tensor(x) for x in xs]
+    xs = [_require_width_height_depth(_numpy_from_tensor(x)) for x in xs]
 
     shape_groups = [x.shape for x in xs]
     norm_groups = norm_groups or shape_groups
@@ -277,6 +283,7 @@ def _check_transformations(
         atol: float,
         rtol: float,
         plot: bool = False,
+        plot_inputs: bool = True,
         **plot_kwargs,
 ):
     results = []
@@ -293,7 +300,12 @@ def _check_transformations(
         results.append((check.g, result, errs.mean()))
 
         if plot:
-            xs, row_labels = zip(*check.plots)
+            if plot_inputs:
+                plots = check.in_plots + check.out_plots
+            else:
+                plots = check.out_plots
+
+            xs, row_labels = zip(*plots)
             imshow_nd(
                     xs=xs,
                     row_labels=row_labels,
@@ -319,9 +331,11 @@ def _iter_invariance_checks(cases: TestCases):
                 g=g,
                 out_eq=(f_x, f_gx),
                 out_shape=cases.out_shape,
-                plots=[
+                in_plots=[
                     (x,    r'$x$'),
                     (gx,   r'$g \cdot x$'),
+                ],
+                out_plots=[
                     (f_x,  r'$f(x)$'),
                     (f_gx, r'$f(g \cdot x)$'),
                 ],
@@ -339,9 +353,11 @@ def _iter_equivariance_checks(cases: TestCases):
                 g=g,
                 out_eq=(f_gx, gf_x),
                 out_shape=cases.out_shape,
-                plots=[
+                in_plots=[
                     (x,    r'$x$'),
                     (gx,   r'$g \cdot x$'),
+                ],
+                out_plots=[
                     (f_x,  r'$f(x)$'),
                     (f_gx, r'$f(g \cdot x)$'),
                     (gf_x, r'$g \cdot f(x)$'),
@@ -391,3 +407,15 @@ def _numpy_from_tensor(x):
 
     x = getattr(x, 'tensor', x)
     return x.detach().numpy()
+
+def _require_width_height_depth(x):
+    n = len(x.shape)
+
+    if n < 2:
+        raise ValueError(f"tensors must have batch and channel dimensions: {x.shape}")
+
+    if n < 5:
+        y = x.reshape(x.shape + (1,) * (5 - n))
+        return y
+
+    return x
