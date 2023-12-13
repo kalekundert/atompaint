@@ -61,6 +61,7 @@ doc = [
 ap_sbatch = "atompaint.hpc.slurm.sbatch:main"
 ap_choose_origins = "atompaint.transform_pred.datasets.cli:main"
 ap_transform_pred = "atompaint.transform_pred.training:main"
+ap_plot_metrics = "atompaint.analysis.plot_metrics:main"
 
 [tool.ruff]
 select = ["F"]
