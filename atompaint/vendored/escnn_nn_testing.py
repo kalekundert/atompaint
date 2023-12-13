@@ -27,6 +27,7 @@ class TestCases:
             out_type: Optional[FieldType] = None,
             out_shape: Optional[tuple[int, ...]] = None,
             group_elements: int | list[GroupElement] = 20,
+            random_seed: int = 0,
     ):
         self.module = module
 
@@ -62,6 +63,8 @@ class TestCases:
 
         self.group = in_type.gspace.fibergroup
         self.group_elements = _pick_group_elements(self.group, group_elements)
+
+        self.random_seed = random_seed
 
 class TestResult:
 
@@ -322,11 +325,12 @@ def _check_transformations(
 
 def _iter_invariance_checks(cases: TestCases):
     f, x = cases.module, cases.in_tensor
-    f_x = f(x)
+    f_x = _forward(f, x, cases.random_seed)
 
     for g in cases.group_elements:
         gx = _transform_tensor(g, x, cases.in_type)
-        f_gx = f(gx)
+        f_gx = _forward(f, gx, cases.random_seed)
+
         yield TestResult(
                 g=g,
                 out_eq=(f_x, f_gx),
@@ -346,8 +350,8 @@ def _iter_equivariance_checks(cases: TestCases):
 
     for g in cases.group_elements:
         gx = _transform_tensor(g, x, cases.in_type)
-        f_x = f(x)
-        f_gx = f(gx)
+        f_x = _forward(f, x, cases.random_seed)
+        f_gx = _forward(f, gx, cases.random_seed)
         gf_x = _transform_tensor(g, f_x, cases.out_type)
         yield TestResult(
                 g=g,
@@ -383,6 +387,12 @@ def _pick_group_elements(
             if not isinstance(el, GroupElement):
                 raise ValueError(f"expected GroupElement, not {el!r}")
             yield el
+
+def _forward(f, x, seed):
+    # Reset the random seed before each forward pass, so that we don't get 
+    # different results from dropout layers and things like that.
+    torch.manual_seed(seed)
+    return f(x)
 
 def _transform_tensor(
         element: GroupElement,
