@@ -1,6 +1,6 @@
 """\
 Usage:
-    ap_transform_pred <config>
+    ap_transform_pred <config> [-d]
 
 Arguments:
     <config>
@@ -10,9 +10,17 @@ Arguments:
         trainer: Arguments to the `Trainer` class.
         model: Arguments to the `PredictorModule` class.
         data: Arguments to the `DataModule` class.
+
+Options:
+    -d --dry-run
+        Run only a few iterations, and don't record any logs.  This is meant to 
+        help test that the program runs before launching a long run.  Note that 
+        this option doesn't affect the batch size, so even a small run might 
+        use a lot of resources.
 """
 
 import lightning.pytorch as pl
+import torch.nn.functional as F
 import os
 
 from .models import (
@@ -39,7 +47,7 @@ from atompaint.encoders.layers import (
         make_fourier_field_types,
 )
 from atompaint.pooling import FourierExtremePool3D
-from atompaint.nonlinearities import leaky_hard_shrink
+from atompaint.nonlinearities import leaky_hard_shrink, first_hermite
 from atompaint.checkpoints import EvalModeCheckpointMixin
 from atompaint.utils import parse_so3_grid
 from escnn.nn import FourierPointwise
@@ -58,6 +66,27 @@ from typing import Optional
 # I'd have to make a new container for every commit.  
 
 PREDICTOR_MODULES = {}
+NONLINEARITIES = {
+        # rectifier
+        'relu': F.relu,
+        'gelu': F.gelu,
+        'elu': F.elu,
+        'silu': F.silu,
+        'mish': F.mish,
+
+        # linear
+        'hardshrink': F.hardshrink,
+        'leaky_hardshrink': leaky_hard_shrink,
+        'softshrink': F.softshrink,
+        'tanhshrink': F.tanhshrink,
+
+        # sigmoid
+        'hardtanh': F.hardtanh,
+        'softsign': F.softsign,
+        'sigmoid': F.sigmoid,
+        'tanh': F.tanh,
+        'hermite': first_hermite,
+}
 
 class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
 
@@ -271,6 +300,7 @@ class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
             growth_channels: int,
             grid: str,
             max_frequency: int,
+            fourier_nonlinearity: str = 'leaky_hardshrink',
             block_depth: int | list[int],
             pool_factors: int | list[int],
             final_conv: int = 0,
@@ -327,7 +357,7 @@ class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
                     nonlin2_factory=partial(
                         FourierPointwise,
                         grid=grid_elements,
-                        function=leaky_hard_shrink,
+                        function=NONLINEARITIES[fourier_nonlinearity],
                     ),
                     pool_factory=lambda in_type, pool_factor: \
                             FourierExtremePool3D(
@@ -449,7 +479,10 @@ class DataModule(pl.LightningDataModule):
 def main():
     args = docopt(__doc__)
     config_path = Path(args['<config>'])
-    c = load_train_config(config_path, predictor_factory, DataModule)
+    c = load_train_config(
+            config_path, predictor_factory, DataModule,
+            dry_run=args['--dry-run'],
+    )
     c.trainer.fit(c.model, c.data, ckpt_path='last')
 
 def predictor_factory(**kwargs):

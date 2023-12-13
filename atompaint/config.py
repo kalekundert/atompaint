@@ -61,7 +61,14 @@ class SlurmTimeoutCallback:
 
     __repr__ = repr_from_init
 
-def load_train_config(path, model_factory, data_factory, **trainer_kwargs):
+def load_train_config(
+        path,
+        model_factory,
+        data_factory,
+        *,
+        dry_run=False,
+        **trainer_kwargs,
+):
     path = path.resolve()
 
     conf = yaml.safe_load(path.read_text())
@@ -111,8 +118,15 @@ def load_train_config(path, model_factory, data_factory, **trainer_kwargs):
                 version=path.stem,
                 default_hp_metric=False,
             ),
+            fast_dev_run=(dry_run and 10),
             **trainer_kwargs,
     )
+
+    if dry_run:
+        # If we only used 1 example per minibatch, we'd run into problems with 
+        # batch normalization.  So we use 2 instead.
+        log.info("reducing batch size from %d to %d because dry run", conf['data']['batch_size'], 2)
+        conf['data']['batch_size'] = 2
 
     model = model_factory(**conf.pop('model'))
     data = data_factory(**conf.pop('data'))
