@@ -25,6 +25,7 @@ dependencies = [
   'pandas',
   'pandera',
   'pdbecif',
+  'pyarrow',
   'pymixbox',
   'pyyaml',
   'reprfunc',
