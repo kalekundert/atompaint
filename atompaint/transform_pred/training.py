@@ -452,6 +452,7 @@ class DataModule(pl.LightningDataModule):
                     batch_size=batch_size,
                     num_workers=num_workers,
                     pin_memory=True,
+                    drop_last=True,
             )
 
         i = 0
