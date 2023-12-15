@@ -5,7 +5,7 @@ with the following columns: element, x, y, z.
 
 import pandas as pd
 import pandera as pa
-import importlib.resources
+import pkgutil
 import re
 import os
 
@@ -16,6 +16,7 @@ from pdbecif.mmcif_io import CifFileReader, CifFileWriter
 from more_itertools import one
 from functools import cache
 from pathlib import Path
+from io import BytesIO
 
 from typing import TypeAlias, Optional
 from pandera.typing import DataFrame, Series
@@ -61,11 +62,33 @@ def parse_pisces_path(path: Path):
 
 @cache
 def load_nonbiological_ligands():
-    vendor_dir = importlib.resources.files('atompaint.vendored')
-    tsv_path = vendor_dir / 'PDB_ligand_quality_composite_score' / 'non-LOI-blocklist.tsv'
+    # Originally I was using `importlib.resources.files()` to load this
+    # resource, but this seemed to cause some baffling errors relating to
+    # multiprocess data loading.  The symptom of the bug was that the data
+    # loader would receive SIGABRT and crash.  But this behavior only happened
+    # with the multiprocess dataloader, and could be influenced by all kinds of
+    # innocuous changes.  I found two examples, both right before providing the
+    # dataloader to the trainer: (i) calling `debug()` with no arguments, and
+    # (ii) creating and discarding an iterator from the dataloader.  The result
+    # of these changes could be either to hide the problem, or to cause
+    # deadlock.
+    #
+    # I still have no idea what the problem is/was, but I determined that the
+    # SIGABRT was coming from the `importlib.resources.file()` call that I was
+    # previously using to get the non-biological ligand blacklist.  I switched
+    # to the `pkgutil.get_data()` approach on the advice of a stack overflow
+    # post [1].  The post doesn't have anything to do with SIGABRT; I was just
+    # looking to try something else (since the bug seemed so fragile), and this
+    # seemed like a better way to load resources overall.
+    #
+    # [1]: https://stackoverflow.com/questions/6028000/how-to-read-a-static-file-from-inside-a-python-package/58941536#58941536
 
+    tsv_bytes = pkgutil.get_data(
+            'atompaint.vendored',
+            'PDB_ligand_quality_composite_score/non-LOI-blocklist.tsv',
+    )
     return pd.read_csv(
-            tsv_path,
+            BytesIO(tsv_bytes),
             sep='\t',
             # Can't find column definitions, so I'm just guessing for some of 
             # these (some are self-evident).
