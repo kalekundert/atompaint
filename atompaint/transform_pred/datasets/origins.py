@@ -168,8 +168,6 @@ class ParquetOriginSampler:
         origins_b = self.origins_by_tag.get_group(tag)
         return tag, origin_a, origins_b, atoms_from_tag(tag)
 
-    def teardown(self):
-        pass
 
 class SqliteOriginSampler:
     """
@@ -182,29 +180,28 @@ class SqliteOriginSampler:
     select_tag = 'SELECT tag FROM tags WHERE id=?'
     select_origins_b = 'SELECT x, y, z FROM origins WHERE tag_id=?'
 
-    def __init__(self, origins_path, copy_to_tmp=True):
-        import sqlite3, tempfile, shutil
+    def __init__(self, origins_path):
+        import sqlite3
 
         origins_path = Path(origins_path)
-        db_path = origins_path / 'origins.db'
-
-        if copy_to_tmp:
-            self.tmp = tempfile.NamedTemporaryFile(
-                    prefix='atompaint_',
-                    delete=True,
-            )
-            shutil.copy2(db_path, self.tmp.name)
-            db_path = self.tmp.name
-
-        self.db = sqlite3.connect(db_path)
+        self.db_path = origins_path / 'origins.db'
 
         # Assume that no rows are ever deleted from the database.
+        db = sqlite3.connect(self.db_path)
         count_origins = 'SELECT MAX(rowid) FROM origins'
-        self.num_origins = self.db.execute(count_origins).fetchone()[0]
+        self.num_origins = db.execute(count_origins).fetchone()[0]
+        db.close()
 
         _, self.params = load_origin_params(origins_path)
 
     def sample(self, rng):
+
+        # When doing multiprocess data loading, we can't connect to the
+        # database until we're in the child process.  
+        if not hasattr(self, 'db'):
+            import sqlite3
+            self.db = sqlite3.connect(self.db_path)
+
         cur = self.db.cursor()
         i = rng.integers(self.num_origins, dtype=int) + 1
 
@@ -224,11 +221,6 @@ class SqliteOriginSampler:
 
         return tag, origin_a, origins_b, atoms
 
-    def teardown(self):
-        try:
-            self.tmp.close()
-        except AttributeError:
-            pass
 
 def load_origins(path: Path):
     dfs = [
@@ -247,6 +239,19 @@ def load_origin_params(path: Path):
     origin_params = OriginParams(**params)
 
     return tags, origin_params
+
+def copy_origins_to_tmp(path: Path):
+    import tempfile, shutil
+
+    tmp = tempfile.TemporaryDirectory(
+            prefix='atompaint_',
+    )
+    tmp_dir = Path(tmp.name)
+
+    shutil.copy2(path / 'origins.db', tmp_dir / 'origins.db')
+    shutil.copy2(path / 'params.json', tmp_dir / 'params.json')
+
+    return tmp
 
 def save_origins(path: Path, df, status, suffix=None):
     if suffix:

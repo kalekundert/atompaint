@@ -27,7 +27,7 @@ from .models import (
         TransformationPredictor, ViewPairEncoder, ViewPairClassifier,
         make_fourier_classifier_field_types, make_linear_fourier_layer,
 )
-from .datasets.origins import SqliteOriginSampler
+from .datasets.origins import SqliteOriginSampler, copy_origins_to_tmp
 from .datasets.classification import (
         CnnViewIndexDataset, make_cube_face_frames_ab,
 )
@@ -396,7 +396,7 @@ class DataModule(pl.LightningDataModule):
     def __init__(
             self, *,
             # Origin parameters
-            origins_path: Path,
+            origins_path: str,
 
             # Image parameters
             grid_length_voxels: int,
@@ -418,7 +418,19 @@ class DataModule(pl.LightningDataModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.origin_sampler = SqliteOriginSampler(origins_path)
+        # - We aren't going to manually clean up the temporary directory that
+        #   we're copying the origins into; we're relying on it cleaning itself
+        #   up when the whole data module is finalized (i.e. right before the
+        #   interpreter shuts down).  This is not guaranteed to happen, so the
+        #   temporary file might persist until the OS cleans it up.
+        #
+        # - We have to store the temporary file in an instance attribute, even
+        #   though we won't reference it again.  If we used a local variable,
+        #   the file would get cleaned up as soon as that variable went out of 
+        #   scope (i.e. at the end of the constructor).
+        self._tmp_origins_path = copy_origins_to_tmp(Path(origins_path))
+
+        origin_sampler = SqliteOriginSampler(self._tmp_origins_path.name)
         img_params = ImageParams(
                 grid=Grid(
                     length_voxels=grid_length_voxels,
@@ -440,7 +452,7 @@ class DataModule(pl.LightningDataModule):
 
         dataset = CnnViewIndexDataset(
                 frames_ab=view_frames_ab,
-                origin_sampler=self.origin_sampler,
+                origin_sampler=origin_sampler,
                 img_params=img_params,
                 recording_path=recording_path,
         )
@@ -451,6 +463,14 @@ class DataModule(pl.LightningDataModule):
                     sampler=sampler,
                     batch_size=batch_size,
                     num_workers=num_workers,
+                    
+                    # For some reason I don't understand, my worker processes
+                    # get killed by SIGABRT if I use the 'fork' context.  The
+                    # behavior is very sensitive to all sorts of small changes
+                    # in the code (e.g. `debug()` calls), which makes me think
+                    # it's some sort of race condition.
+                    multiprocessing_context='spawn',
+
                     pin_memory=True,
                     drop_last=True,
             )
@@ -473,9 +493,6 @@ class DataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         return self._test_dataloader
-
-    def teardown(self, stage):
-        self.origin_sampler.teardown()
 
 def main():
     args = docopt(__doc__)
