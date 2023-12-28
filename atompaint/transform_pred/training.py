@@ -458,6 +458,7 @@ class DataModule(pl.LightningDataModule):
         )
 
         def make_dataloader(sampler):
+
             return DataLoader(
                     dataset=dataset,
                     sampler=sampler,
@@ -469,7 +470,7 @@ class DataModule(pl.LightningDataModule):
                     # behavior is very sensitive to all sorts of small changes
                     # in the code (e.g. `debug()` calls), which makes me think
                     # it's some sort of race condition.
-                    multiprocessing_context='spawn',
+                    multiprocessing_context='spawn' if num_workers else None,
 
                     pin_memory=True,
                     drop_last=True,
