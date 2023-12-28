@@ -4,6 +4,9 @@
 //
 // 	   $ pip install --no-deps --no-build-isolation --editable .
 //
+// 	 This only works if `setuptools` and `pybind11` are installed in the
+// 	 virtual environment in question.
+//
 // - After one `pip install` fails, you can copy the compiler command from the 
 //   error message.  This doesn't actually update the python installation, 
 //   though, so after compilation succeeds, you need to run `pip install`.
@@ -19,10 +22,8 @@
 #include <vector>
 #include <tuple>
 #include <stdexcept>
-
 #include <sstream>
 #include <iostream>
-#include <format>
 
 #define watch(x) std::cerr << (#x) << std::endl << (x) << std::endl << std::endl
 
@@ -43,7 +44,40 @@ typedef std::tuple<int, int, int> grid_shape_t;
 
 scalar_t static const FUDGE_FACTOR = 1 + 1e-6;
 
-std::string repr(vector_t const & vec) {
+struct Atom {
+
+	Atom(Sphere sphere, int channel, float occupancy):
+		sphere(sphere), channel(channel), occupancy(occupancy) {}
+
+	Sphere const sphere;
+	int const channel;
+	float const occupancy;
+};
+
+struct Grid {
+
+	Grid(
+        int length_voxels,
+        scalar_t resolution_A,
+        vector_t const & center_A = {0, 0, 0}
+    ):
+		length_voxels(length_voxels),
+		resolution_A(resolution_A),
+		length_A(length_voxels * resolution_A),
+		center_A(center_A) {}
+
+	grid_shape_t get_shape() const {
+		return std::make_tuple(length_voxels, length_voxels, length_voxels);
+	}
+
+	int const length_voxels;
+	scalar_t const resolution_A;
+	scalar_t const length_A;
+	vector_t const center_A;
+};
+
+
+std::ostream& operator << (std::ostream& os, vector_t const & vec) {
 	Eigen::IOFormat repr(
 			Eigen::StreamPrecision,
 			Eigen::DontAlignCols,
@@ -54,15 +88,28 @@ std::string repr(vector_t const & vec) {
 			"[",
 			"]");
 
-	std::stringstream ss;
-	ss << vec.transpose().format(repr);
-	return ss.str();
+	os << vec.transpose().format(repr);
+    return os;
 }
 
-std::string repr(Sphere const & sphere) {
-	return std::format(
-			"Sphere(center_A={}, radius_A={})",
-			repr(sphere.center), sphere.radius);
+std::ostream& operator << (std::ostream& os, Sphere const & sphere) {
+    os << "Sphere(center_A=" << sphere.center <<
+               ", radius_A=" << sphere.radius << ")";
+    return os;
+}
+
+std::ostream& operator << (std::ostream& os, Atom const & atom) {
+    os << "Atom(sphere=" << atom.sphere <<
+             ", channel=" << atom.channel <<
+             ", occupancy=" << atom.occupancy << ")";
+    return os;
+}
+
+std::ostream& operator << (std::ostream& os, Grid const & grid) {
+    os << "Grid(length_voxels=" << grid.length_voxels <<
+             ", resolution_A=" << grid.resolution_A <<
+             ", center_A=" << grid.center_A << ")";
+    return os;
 }
 
 template < class T >
@@ -75,47 +122,6 @@ std::ostream& operator << (std::ostream& os, const std::vector<T>& v) {
     os << "]";
     return os;
 }
-
-
-struct Atom {
-
-	Atom(Sphere sphere, int channel, float occupancy):
-		sphere(sphere), channel(channel), occupancy(occupancy) {}
-
-	std::string str() const {
-		return std::format(
-				"Atom(sphere={}, channel={}, occupancy={})",
-				repr(sphere), channel, occupancy);
-	}
-
-	Sphere const sphere;
-	int const channel;
-	float const occupancy;
-};
-
-struct Grid {
-
-	Grid(int length_voxels, scalar_t resolution_A, vector_t const & center_A = {0, 0, 0}):
-		length_voxels(length_voxels),
-		resolution_A(resolution_A),
-		length_A(length_voxels * resolution_A),
-		center_A(center_A) {}
-
-	std::string str() const {
-		return std::format(
-				"Grid(length_voxels={}, resolution_A={}, center_A={})",
-				length_voxels, resolution_A, repr(center_A));
-	}
-
-	grid_shape_t get_shape() const {
-		return std::make_tuple(length_voxels, length_voxels, length_voxels);
-	}
-
-	int const length_voxels;
-	scalar_t const resolution_A;
-	scalar_t const length_A;
-	vector_t const center_A;
-};
 
 
 template <typename T>
@@ -280,9 +286,10 @@ _add_atom_to_image(
 		// other messages.  This isn't a real concern, though, because I don't 
 		// really expect this message to ever be printed.
 
-		std::cerr << std::format(
-					"numerical instability in overlap calculation: sum of all overlap volumes ({} A^3) differs from sphere volume ({} A^3)",
-					total_overlap_A3, atom.sphere.volume) << std::endl;
+		std::cerr << "numerical instability in overlap calculation: "
+            << "sum of all overlap volumes (" << total_overlap_A3 << " A^3) "
+            << "differs from sphere volume (" << atom.sphere.volume << " A^3)"
+            << std::endl;
 	}
 }
 
@@ -308,7 +315,11 @@ PYBIND11_MODULE(_voxelize, m) {
 				py::arg("radius_A"))
 		.def(
 				"__repr__",
-				[](Sphere const & sphere) { return repr(sphere); },
+				[](Sphere const & sphere) { 
+                	std::stringstream ss;
+                    ss << sphere;
+                    return ss.str();
+                },
 				py::is_operator())
 		.def(
 				py::pickle(
@@ -333,7 +344,14 @@ PYBIND11_MODULE(_voxelize, m) {
 				py::arg("sphere"),
 				py::arg("channel"),
 				py::arg("occupancy"))
-		.def("__repr__", &Atom::str)
+		.def(
+                "__repr__",
+                [](Atom const & atom) {
+                	std::stringstream ss;
+                    ss << atom;
+                    return ss.str();
+                },
+				py::is_operator())
 		.def(
 				py::pickle(
 					[](Atom const & atom) {
@@ -361,7 +379,14 @@ PYBIND11_MODULE(_voxelize, m) {
 				py::arg("length_voxels"),
 				py::arg("resolution_A"),
 				py::arg("center_A") = vector_t {0,0,0})
-		.def("__repr__", &Grid::str)
+		.def(
+                "__repr__",
+                [](Grid const & grid) {
+                	std::stringstream ss;
+                    ss << grid;
+                    return ss.str();
+                },
+				py::is_operator())
 		.def(
 				py::pickle(
 					[](Grid const & grid) {
