@@ -1,14 +1,19 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = [
+  "setuptools>=42",
+  #"setuptools-scm",
+  "pybind11>2.10",
+]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "atompaint"
 authors = [
   {name = "Kale Kundert", email = "kale@thekunderts.net"},
 ]
+description = "Design macromolecular interactions by in-painting voxelized full-atom models."
 readme = 'README.rst'
-dynamic = ["version", "description"]
+dynamic = ["version"]
 requires-python = "~=3.10"
 classifiers = [
   'Programming Language :: Python :: 3',
@@ -19,7 +24,6 @@ dependencies = [
   'lightning',
   'more_itertools',
   'nestedtext',
-  'numba',
   'numpy',
   'overlap',
   'pandas',
@@ -65,6 +69,12 @@ ap_choose_origins = "atompaint.transform_pred.datasets.cli:main"
 ap_transform_pred = "atompaint.transform_pred.training:main"
 ap_plot_metrics = "atompaint.analysis.plot_metrics:main"
 
+[tool.setuptools]
+packages = ["atompaint"]
+
+[tool.setuptools.dynamic]
+version = {attr = "atompaint.__version__"}
+
 [tool.ruff]
 select = ["F"]
 ignore = ["F405", "F403"]
@@ -76,7 +86,6 @@ ignore = ["F405", "F403"]
 addopts = "--doctest-modules --doctest-glob='*.rst'"
 doctest_optionflags = 'NORMALIZE_WHITESPACE'
 filterwarnings = 'ignore:.*Lazy modules are a new feature.*:UserWarning:torch.nn.modules.lazy'
-
 
 [tool.coverage.run]
 branch = true

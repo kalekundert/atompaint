@@ -185,8 +185,11 @@ def _adapt_img_params(img_params):
     # structure.
 
     d = asdict(img_params)
-    d['grid']['center_A'] = d['grid']['center_A'].tolist()
-
+    d['grid'] = {
+            'length_voxels': d['grid'].length_voxels,
+            'resolution_A': d['grid'].resolution_A,
+            'center_A': d['grid'].center_A.tolist(),
+    }
     return json.dumps(d)
 
 def _convert_img_params(bytes):

@@ -4,3 +4,6 @@
 [submodule "atompaint/vendored/Eigen"]
 	path = atompaint/vendored/Eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "atompaint/vendored/overlap"]
+	path = atompaint/vendored/overlap
+	url = https://github.com/severinstrobl/overlap.git

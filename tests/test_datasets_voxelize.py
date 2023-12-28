@@ -1,8 +1,11 @@
 import atompaint.datasets.voxelize as apdv
+import atompaint.datasets._voxelize as apdv_c
 import numpy as np
 import pandas as pd
 import pytest
+import pickle
 
+from atompaint.datasets.voxelize import Sphere, Atom, Grid
 from io import StringIO
 from itertools import product
 from collections import namedtuple
@@ -27,10 +30,10 @@ def grid(params):
         if params:
             raise ValueError(f"unexpected grid parameter(s): {list(params)}")
 
-    return apdv.Grid(length_voxels, resolution_A, center_A)
+    return Grid(length_voxels, resolution_A, center_A)
 
 def sphere(params):
-    return apdv.Sphere(
+    return Sphere(
             center_A=coord(params['center_A']),
             radius_A=with_math.eval(params['radius_A']),
     )
@@ -42,7 +45,7 @@ def cube(params):
     )
 
 def atom(params):
-    return apdv.Atom(
+    return Atom(
             sphere=sphere(params),
             channel=int(params['channel']),
             occupancy=float(params.get('occupancy', 1)),
@@ -96,10 +99,9 @@ def test_image_from_atoms(atoms, img_params, expected):
     img = apdv.image_from_atoms(atoms, img_params)
     assert_images_match(img, expected)
 
-
 def test_make_empty_image():
     img_params = apdv.ImageParams(
-            grid=apdv.Grid(
+            grid=Grid(
                 length_voxels=3,
                 resolution_A=1,         # not relevant
                 center_A=np.zeros(3),   # not relevant
@@ -133,7 +135,7 @@ def test_make_atom():
     assert atom.sphere.center_A == approx([1, 2, 3])
     assert atom.sphere.radius_A == approx(1)
     assert atom.channel == 0
-    assert atom.occupancy == 0.8
+    assert atom.occupancy == approx(0.8)
 
 @pff.parametrize(
         schema=pff.cast(radii=with_py.eval, expected=float),
@@ -152,9 +154,30 @@ def test_get_element_channel(channels, element, expected):
         schema=pff.cast(grid=grid, atom=atom, expected=image)
 )
 def test_add_atom_to_image(grid, atom, expected):
-    img = np.zeros((atom.channel + 1, *grid.shape))
-    apdv._add_atom_to_image(img, grid, atom)
+    img = np.zeros((atom.channel + 1, *grid.shape), dtype=np.float32)
+    apdv_c._add_atom_to_image(img, grid, atom)
     assert_images_match(img, expected)
+
+def test_add_atom_to_image_no_copy():
+    grid = Grid(
+            length_voxels=3,
+            resolution_A=1,
+    )
+    atom = Atom(
+            sphere=Sphere(
+                center_A=np.zeros(3),
+                radius_A=1,
+            ),
+            channel=0,
+            occupancy=1,
+    )
+
+    # `float64` is the wrong data type; `float32` is required.  The binding 
+    # code should notice the discrepancy and complain.
+    img = np.zeros((2, 3, 3, 3), dtype=np.float64)
+
+    with pytest.raises(TypeError):
+        apdv_c._add_atom_to_image(img, grid, atom)
 
 @pff.parametrize(
         schema=pff.cast(
@@ -167,16 +190,10 @@ def test_add_atom_to_image(grid, atom, expected):
         ),
 )
 def test_find_voxels_possibly_contacting_sphere(grid, sphere, expected):
-    voxels = apdv._find_voxels_possibly_contacting_sphere_jit(
-            grid.length_voxels,
-            grid.resolution_A,
-            grid.center_A,
-            sphere.center_A,
-            sphere.radius_A,
-    )
+    voxels = apdv_c._find_voxels_possibly_contacting_sphere(grid, sphere)
     voxel_tuples = {
             tuple(x)
-            for x in voxels
+            for x in voxels.T
     }
 
     if expected == 'empty':
@@ -191,6 +208,7 @@ def test_find_voxels_possibly_contacting_sphere(grid, sphere, expected):
                 for i, j, k in product(*axes)
         }
 
+    debug(voxels, voxel_tuples, expected_tuples)
     assert voxel_tuples >= expected_tuples
 
 @pff.parametrize(
@@ -199,13 +217,8 @@ def test_find_voxels_possibly_contacting_sphere(grid, sphere, expected):
 )
 def test_find_voxels_containing_coords(grid, coords, voxels):
     np.testing.assert_array_equal(
-            apdv._find_voxels_containing_coords_jit(
-                grid.length_voxels,
-                grid.resolution_A,
-                grid.center_A,
-                coords,
-            ),
-            voxels,
+            apdv_c._find_voxels_containing_coords(grid, coords.T),
+            voxels.T,
             verbose=True,
     )
 
@@ -214,70 +227,127 @@ def test_find_voxels_containing_coords(grid, coords, voxels):
 )
 def test_discard_voxels_outside_image(grid, voxels, expected):
     np.testing.assert_array_equal(
-            apdv._discard_voxels_outside_image_jit(grid.length_voxels, voxels),
-            expected.reshape(-1, 3),
+            apdv_c._discard_voxels_outside_image(grid, voxels.T),
+            expected.reshape(-1, 3).T,
     )
 
 @pff.parametrize(
         schema=pff.cast(grid=grid, voxels=indices, coords=coords),
 )
 def test_get_voxel_center_coords(grid, voxels, coords):
-    actual = apdv._get_voxel_center_coords_jit(
-            grid.length_voxels,
-            grid.resolution_A,
-            grid.center_A,
-            voxels,
-    )
+    actual = apdv.get_voxel_center_coords(grid, voxels)
     assert actual == approx(coords)
 
-def test_get_cube_verts():
-    # Be careful to use the "right" types, so we don't unnecessarily compile 
-    # another version of this function.
-    cube_center_A = coord('1 2 3')
-    cube_length_A = 1.0
 
-    verts = apdv._get_cube_verts_jit(cube_center_A, cube_length_A)
-
-    # The specific order of the vertices is important.
-    expected = np.array([
-        [0.5, 1.5, 2.5],
-        [1.5, 1.5, 2.5],
-        [1.5, 2.5, 2.5],
-        [0.5, 2.5, 2.5],
-        [0.5, 1.5, 3.5],
-        [1.5, 1.5, 3.5],
-        [1.5, 2.5, 3.5],
-        [0.5, 2.5, 3.5],
-    ])
-
-    assert verts == approx(expected)
-
-@pff.parametrize(
-        schema=pff.cast(sphere=sphere, cube=cube, expected=with_math.eval)
-)
-def test_calc_sphere_cube_overlap_volume_A3(sphere, cube, expected):
-    verts = apdv._get_cube_verts_jit(cube.center_A, cube.length_A)
-    assert apdv._calc_sphere_cube_overlap_volume_A3(sphere, verts) == \
-            approx(expected * sphere.volume_A3)
-
-@pff.parametrize(
-        schema=pff.cast(
-            overlap_A3=with_math.eval,
-            radius_A=with_math.eval,
-            occupancy=with_math.eval,
-            expected=with_math.eval,
-        ),
-)
-def test_calc_fraction_atom_in_voxel(overlap_A3, radius_A, occupancy, expected):
-    voxel = apdv._calc_fraction_atom_in_voxel_jit(
-            overlap_A3,
-            radius_A,
-            occupancy,
+def test_sphere_attrs():
+    s = Sphere(
+            center_A=np.array([1,2,3]),
+            radius_A=4,
     )
-    assert voxel == approx(expected)
+    assert s.center_A == approx([1,2,3])
+    assert s.radius_A == 4
 
-def test_calc_sphere_volume_A3():
     # https://www.omnicalculator.com/math/sphere-volume
-    assert apdv._calc_sphere_volume_A3_jit(1) == approx(4.189, abs=0.001)
-    assert apdv._calc_sphere_volume_A3_jit(2) == approx(33.51, abs=0.01)
+    assert s.volume_A3 == approx(268.1, abs=0.1)
 
+def test_sphere_repr():
+    s = Sphere(
+            center_A=np.array([1,2,3]),
+            radius_A=4,
+    )
+    s_repr = eval(repr(s))
+
+    np.testing.assert_array_equal(s_repr.center_A, [1,2,3])
+    assert s_repr.radius_A == 4
+
+def test_sphere_pickle():
+    s = Sphere(
+            center_A=np.array([1,2,3]),
+            radius_A=4,
+    )
+    s_pickle = pickle.loads(pickle.dumps(s))
+
+    np.testing.assert_array_equal(s_pickle.center_A, [1,2,3])
+    assert s_pickle.radius_A == 4
+
+
+def test_grid_attrs():
+    g = Grid(
+            center_A=np.array([1,2,3]),
+            length_voxels=4,
+            resolution_A=0.5,
+    )
+    assert g.center_A == approx([1,2,3])
+    assert g.length_voxels == 4
+    assert g.resolution_A == 0.5
+
+def test_grid_repr():
+    g = Grid(
+            center_A=np.array([1,2,3]),
+            length_voxels=4,
+            resolution_A=0.5,
+    )
+    g_repr = eval(repr(g))
+
+    np.testing.assert_array_equal(g_repr.center_A, [1,2,3])
+    assert g_repr.length_voxels == 4
+    assert g_repr.resolution_A == 0.5
+
+def test_grid_pickle():
+    g = Grid(
+            center_A=np.array([1,2,3]),
+            length_voxels=4,
+            resolution_A=0.5,
+    )
+    g_pickle = pickle.loads(pickle.dumps(g))
+
+    np.testing.assert_array_equal(g_pickle.center_A, [1,2,3])
+    assert g_pickle.length_voxels == 4
+    assert g_pickle.resolution_A == 0.5
+
+
+def test_atom_attrs():
+    a = Atom(
+            sphere=Sphere(
+                center_A=np.array([1,2,3]),
+                radius_A=4,
+            ),
+            channel=0,
+            occupancy=0.5,
+    )
+    assert a.sphere.center_A == approx([1,2,3])
+    assert a.sphere.radius_A == 4
+    assert a.channel == 0
+    assert a.occupancy == 0.5
+
+def test_atom_repr():
+    a = Atom(
+            sphere=Sphere(
+                center_A=np.array([1,2,3]),
+                radius_A=4,
+            ),
+            channel=0,
+            occupancy=0.5,
+    )
+    a_repr = eval(repr(a))
+
+    np.testing.assert_array_equal(a_repr.sphere.center_A, [1,2,3])
+    assert a_repr.sphere.radius_A == 4
+    assert a_repr.channel == 0
+    assert a_repr.occupancy == 0.5
+
+def test_atom_pickle():
+    a = Atom(
+            sphere=Sphere(
+                center_A=np.array([1,2,3]),
+                radius_A=4,
+            ),
+            channel=0,
+            occupancy=0.5,
+    )
+    a_pickle = pickle.loads(pickle.dumps(a))
+
+    np.testing.assert_array_equal(a_pickle.sphere.center_A, [1,2,3])
+    assert a_pickle.sphere.radius_A == 4
+    assert a_pickle.channel == 0
+    assert a_pickle.occupancy == 0.5
