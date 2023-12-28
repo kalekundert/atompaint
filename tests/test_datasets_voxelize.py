@@ -208,7 +208,6 @@ def test_find_voxels_possibly_contacting_sphere(grid, sphere, expected):
                 for i, j, k in product(*axes)
         }
 
-    debug(voxels, voxel_tuples, expected_tuples)
     assert voxel_tuples >= expected_tuples
 
 @pff.parametrize(
