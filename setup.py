@@ -12,7 +12,7 @@ setup(
                         'atompaint/vendored/Eigen',
                         'atompaint/vendored/overlap',
                 ],
-                cxx_std=20,
+                cxx_std=14,
             ),
         ],
 )
