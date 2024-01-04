@@ -83,10 +83,16 @@ def make_polynomial_field_types(gspace, channels, terms):
         yield FieldType(gspace, channels_i * list(rho))
 
 def iter_polynomial_representations(group):
-    rho_next = group.irrep(0)
-    rho_1 = group.irrep(1)
+    # Avoid generating the tensor product of the zeroth and first irrep.  The 
+    # resulting representation doesn't have any "supported nonlinearities", see 
+    # the if-statement at the end of `Group._tensor_product()`.  This is 
+    # probably a bug in escnn, but the work-around is easy.
 
-    yield rho_next
+    rho_0 = group.irrep(0)
+    rho_1 = rho_next = group.irrep(1)
+
+    yield rho_0
+    yield rho_1
 
     while True:
         rho_next = rho_next.tensor(rho_1)
