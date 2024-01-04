@@ -25,7 +25,9 @@ import os
 
 from .models import (
         TransformationPredictor, ViewPairEncoder, ViewPairClassifier,
+        NonequivariantViewPairClassifier,
         make_fourier_classifier_field_types, make_linear_fourier_layer,
+        make_nonequivariant_linear_relu_dropout_layer,
 )
 from .datasets.origins import SqliteOriginSampler, copy_origins_to_tmp
 from .datasets.classification import (
@@ -305,6 +307,7 @@ class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
             pool_factors: int | list[int],
             final_conv: int = 0,
             mlp_channels: list[int],
+            equivariant_mlp: bool = True,
     ):
         gspace = rot3dOnR3()
         so3 = gspace.fibergroup
@@ -369,22 +372,34 @@ class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
                     block_depth=block_depth,
                 ),
         )
-        classifier = ViewPairClassifier(
-                layer_types=make_fourier_classifier_field_types(
-                    in_type=encoder.out_type,
-                    channels=mlp_channels,
-                    max_frequencies=max_frequency,
-                ),
-                layer_factory=partial(
-                    make_linear_fourier_layer,
-                    ift_grid=grid_elements,
-                ),
-                logits_max_freq=max_frequency,
 
-                # This has to be the same as the grid used to construct the 
-                # dataset.  For now, I've just hard-coded the 'cube' grid.
-                logits_grid=so3.sphere_grid('cube'),
-        )
+        if equivariant_mlp:
+            classifier = ViewPairClassifier(
+                    layer_types=make_fourier_classifier_field_types(
+                        in_type=encoder.out_type,
+                        channels=mlp_channels,
+                        max_frequencies=max_frequency,
+                    ),
+                    layer_factory=partial(
+                        make_linear_fourier_layer,
+                        ift_grid=grid_elements,
+                    ),
+                    logits_max_freq=max_frequency,
+
+                    # This has to be the same as the grid used to construct the 
+                    # dataset.  For now, I've just hard-coded the 'cube' grid.
+                    logits_grid=so3.sphere_grid('cube'),
+            )
+        else:
+            assert mlp_channels[-1] == 6
+            classifier = NonequivariantViewPairClassifier(
+                    channels=mlp_channels,
+                    layer_factory=partial(
+                        make_nonequivariant_linear_relu_dropout_layer,
+                        drop_rate=0.2,
+                    ),
+            )
+
         model = TransformationPredictor(
                 encoder=encoder,
                 classifier=classifier,

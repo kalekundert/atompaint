@@ -175,6 +175,47 @@ class ViewPairClassifier(Module):
     def in_type(self):
         return self.layer_types[0]
 
+class NonequivariantViewPairClassifier(Module):
+    """
+    A simple MLP classifier.
+
+    The motivations behind this classifier are that:
+
+    - As it is, the equivariant classifier doesn't account for all symmetries 
+      of the problem.  Specifically, if the two input views are swapped, then 
+      the output should change in a deterministic way, but this is not done.
+
+    - I expect that a regular, non-equivariant MLP will be more expressive, 
+      because it can use ordinary nonlinearities.  
+
+    - Even when not enforced, the model can still learn a degree of 
+      "equivariance" via data augmentation.  This might be enough to train the 
+      model.
+    """
+
+    def __init__(
+            self, *,
+            channels: list[int],
+            layer_factory: LayerFactory,
+    ):
+        super().__init__()
+
+        *channels, num_categories = channels
+
+        layers = []
+        for in_channels, out_channels in pairwise(channels):
+            layers += list(layer_factory(in_channels, out_channels))
+
+        self.mlp = torch.nn.Sequential(
+                *layers,
+                torch.nn.Linear(channels[-1], num_categories),
+        )
+
+    def forward(self, input: GeometricTensor) -> torch.Tensor:
+        assert input.tensor.dim() == 2
+        return self.mlp(input.tensor)
+
+
 def make_fourier_classifier_field_types(
         in_type: FieldType,
         channels: int | list[int],
@@ -240,6 +281,18 @@ def make_linear_fourier_layer(
     # If I were going to use drop-out, it'd come after the nonlinearity.  But 
     # I've seen some comments saying the batch norm and dropout don't work well 
     # together.
+
+def make_nonequivariant_linear_relu_dropout_layer(
+        in_channels,
+        out_channels,
+        *,
+        drop_rate,
+):
+    from torch import nn
+
+    yield nn.Linear(in_channels, out_channels)
+    yield nn.ReLU()
+    yield nn.Dropout(drop_rate)
 
 def _flatten_base_space(geom_tensor):
     # TODO: I'd like to contribute this as a method of the `GeometricTensor` 
