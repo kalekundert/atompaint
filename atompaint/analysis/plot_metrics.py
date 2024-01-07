@@ -187,19 +187,21 @@ def plot_training_metrics(df, metrics, hparams, *, x='step', show_raw=True):
                 ax = axes[j,i]
 
                 hparam_value = one(df_i[hparam].unique())
-                color = hparam_colors[hparam, hparam_value]
-                color_raw[-1].append((j, color))
+                if hparam_value is not None:
+                    color = hparam_colors[hparam, hparam_value]
+                    color_raw[-1].append((j, color))
 
-                ax.plot(
-                        t_smooth, y_smooth,
-                        label=f'{hparam_value}',
-                        color=color,
-                )
+                    ax.plot(
+                            t_smooth, y_smooth,
+                            label=f'{hparam_value}',
+                            color=color,
+                    )
 
                 if j == 0:
                     ax.set_title(metric)
                 if j == len(hparams) - 1:
                     ax.set_xlabel(x_labels[x])
+
 
         if show_raw:
             ylim = axes[0,i].get_ylim()
@@ -210,21 +212,25 @@ def plot_training_metrics(df, metrics, hparams, *, x='step', show_raw=True):
                     axes[j,i].set_ylim(*ylim)
 
     for i, ax_row in enumerate(axes):
-        h, l = zip(
-                *unique(
-                    zip(*ax_row[0].get_legend_handles_labels()),
-                    key=itemgetter(1),
-                )
-        )
+        labels = ax_row[0].get_legend_handles_labels()
 
-        ax_row[-1].legend(
-                h, l,
-                borderaxespad=0,
-                title=hparams[i],
-                alignment='left',
-                frameon=False,
-                loc='center left',
-        )
+        if any(labels):
+            h, l = zip(
+                    *unique(
+                        zip(*labels),
+                        key=itemgetter(1),
+                    )
+            )
+
+            ax_row[-1].legend(
+                    h, l,
+                    borderaxespad=0,
+                    title=hparams[i],
+                    alignment='left',
+                    frameon=False,
+                    loc='center left',
+            )
+
         ax_row[-1].axis('off')
 
 def infer_elapsed_time(t):
@@ -283,7 +289,7 @@ def _pick_hparam_colors(df, hparams):
     hparam_colors = {}
 
     for hparam in hparams:
-        hparam_values = df[hparam].unique(maintain_order=True)
+        hparam_values = df[hparam].unique(maintain_order=True).drop_nulls()
         for i, value in enumerate(hparam_values):
             hparam_colors[hparam, value] = f'C{i}'
 
@@ -299,6 +305,8 @@ def _apply_smoothing(x, y):
     x_inlier = x[inlier_mask]
     y_inlier = y[inlier_mask]
 
+    if len(x_inlier) < window_length:
+        return x, y
     if len(x_inlier) < 2 * window_length:
         x_inlier = x
         y_inlier = y
