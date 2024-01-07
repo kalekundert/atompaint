@@ -535,6 +535,7 @@ class DataModule(pl.LightningDataModule):
                     # in the code (e.g. `debug()` calls), which makes me think
                     # it's some sort of race condition.
                     multiprocessing_context='spawn' if num_workers else None,
+                    persistent_workers=True,
 
                     pin_memory=True,
                     drop_last=True,
