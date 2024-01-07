@@ -5,10 +5,11 @@ from atompaint.type_hints import LayerFactory
 from escnn.group import Representation
 from escnn.gspaces import icoOnR3, rot3dOnR3, GSpace
 from escnn.nn import *
+from torch import nn, Tensor
 from itertools import pairwise
 from more_itertools import all_equal
 
-class EquivariantCnn(torch.nn.Module):
+class EquivariantCnn(nn.Module):
     """
     A base class implementing some common features for equivariant CNNs.
 
@@ -185,3 +186,43 @@ class FourierCnn(EquivariantCnn):
                 latent_repr=[fourier_repr],
                 layer_factory=layer_factory,
         )
+
+class NonequivariantCnn(nn.Module):
+
+    def __init__(
+            self,
+            *,
+            channels,
+            kernel_sizes: int | list[int],
+            strides: int | list[int],
+            paddings: int | list[int],
+            pool_sizes: int | list[int],
+    ):
+        super().__init__()
+
+        def iter_layers():
+            for i, (in_channels, out_channels) in enumerate(pairwise(channels)):
+                yield nn.Conv3d(
+                        in_channels=in_channels,
+                        out_channels=out_channels,
+                        kernel_size=get_scalar(kernel_sizes, i),
+                        stride=get_scalar(strides, i),
+                        padding=get_scalar(paddings, i),
+                )
+                yield nn.BatchNorm3d(out_channels)
+                yield nn.ReLU(inplace=True)
+
+                pool_size = get_scalar(pool_sizes, i)
+                if pool_size > 1:
+                    yield nn.MaxPool3d(
+                            kernel_size=pool_size,
+                            stride=pool_size,
+                    )
+
+            yield nn.Flatten()
+
+        self.layers = nn.Sequential(*iter_layers())
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.layers(x)
+

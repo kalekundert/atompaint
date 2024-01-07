@@ -25,7 +25,7 @@ import os
 
 from .models import (
         TransformationPredictor, ViewPairEncoder, ViewPairClassifier,
-        NonequivariantViewPairClassifier,
+        NonequivariantViewPairEncoder, NonequivariantViewPairClassifier,
         make_fourier_classifier_field_types, make_linear_fourier_layer,
         make_nonequivariant_linear_relu_dropout_layer,
 )
@@ -36,7 +36,7 @@ from .datasets.classification import (
 from atompaint.config import load_train_config
 from atompaint.datasets.voxelize import ImageParams, Grid
 from atompaint.datasets.samplers import RangeSampler, InfiniteSampler
-from atompaint.encoders.cnn import FourierCnn
+from atompaint.encoders.cnn import FourierCnn, NonequivariantCnn
 from atompaint.encoders.resnet import (
         ResNet, make_escnn_example_block, make_alpha_block,
 )
@@ -142,7 +142,7 @@ class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
     def in_type(self):
         return self.model.in_type
 
-class CnnPredictorModule(PredictorModule, factory_key='cnn'):
+class CnnPredictor(PredictorModule, factory_key='cnn'):
 
     def __init__(
             self, *,
@@ -185,7 +185,43 @@ class CnnPredictorModule(PredictorModule, factory_key='cnn'):
         )
         super().__init__(model)
 
-class ResNetPredictorModule(PredictorModule, factory_key='resnet'):
+class NonequivariantCnnPredictor(PredictorModule, factory_key='cnn-noneq'):
+
+    def __init__(
+            self,
+            conv_channels: list[int],
+            conv_kernel_sizes: int | list[int],
+            conv_strides: int | list[int],
+            conv_paddings: int | list[int],
+            pool_sizes: int | list[int],
+            mlp_channels: int | list[int],
+    ):
+        assert mlp_channels[-1] == 6
+
+        encoder = NonequivariantViewPairEncoder(
+                NonequivariantCnn(
+                    channels=conv_channels,
+                    kernel_sizes=conv_kernel_sizes,
+                    strides=conv_strides,
+                    paddings=conv_paddings,
+                    pool_sizes=pool_sizes,
+                ),
+        )
+        classifier = NonequivariantViewPairClassifier(
+                channels=mlp_channels,
+                layer_factory=partial(
+                    make_nonequivariant_linear_relu_dropout_layer,
+                    drop_rate=0.2,
+                ),
+        )
+        model = TransformationPredictor(
+                encoder=encoder,
+                classifier=classifier,
+        )
+        super().__init__(model)
+
+
+class ResNetPredictor(PredictorModule, factory_key='resnet'):
 
     def __init__(
             self,
@@ -293,7 +329,7 @@ class ResNetPredictorModule(PredictorModule, factory_key='resnet'):
         )
         super().__init__(model)
 
-class DenseNetPredictorModule(PredictorModule, factory_key='densenet'):
+class DenseNetPredictor(PredictorModule, factory_key='densenet'):
 
     def __init__(
             self,

@@ -85,6 +85,17 @@ class ViewPairEncoder(Module):
         gspace = no_base_space(out_type.gspace.fibergroup)
         return FieldType(gspace, 2 * out_type.representations)
 
+class NonequivariantViewPairEncoder(Module):
+
+    def __init__(self, encoder: Module):
+        super().__init__()
+        self.encoder = encoder
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y0 = self.encoder(x[:,0])
+        y1 = self.encoder(x[:,1])
+
+        return torch.cat([y0, y1], dim=1)
 
 class ViewPairClassifier(Module):
 
@@ -211,9 +222,12 @@ class NonequivariantViewPairClassifier(Module):
                 torch.nn.Linear(channels[-1], num_categories),
         )
 
-    def forward(self, input: GeometricTensor) -> torch.Tensor:
-        assert input.tensor.dim() == 2
-        return self.mlp(input.tensor)
+    def forward(self, x: torch.Tensor | GeometricTensor) -> torch.Tensor:
+        if isinstance(input, GeometricTensor):
+            x = x.tensor 
+
+        assert x.dim() == 2
+        return self.mlp(x)
 
 
 def make_fourier_classifier_field_types(
