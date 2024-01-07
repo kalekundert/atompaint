@@ -223,7 +223,7 @@ class NonequivariantViewPairClassifier(Module):
         )
 
     def forward(self, x: torch.Tensor | GeometricTensor) -> torch.Tensor:
-        if isinstance(input, GeometricTensor):
+        if isinstance(x, GeometricTensor):
             x = x.tensor 
 
         assert x.dim() == 2
