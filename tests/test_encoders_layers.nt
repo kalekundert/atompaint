@@ -1,0 +1,126 @@
+test_make_exact_width_field_type:
+  -
+    id: channels-1-psi-0
+    channels: 1
+    rho: [psi(0)]
+    expected: [psi(0)]
+  -
+    id: channels-2-psi-0
+    channels: 2
+    rho: [psi(0)]
+    expected: 2 * [psi(0)]
+  -
+    id: channels-3-psi-1
+    channels: 3
+    rho: [psi(0), psi(1)]
+    expected: 3 * [psi(0)]
+  -
+    id: channels-4-psi-1
+    channels: 4
+    rho: [psi(0), psi(1)]
+    expected: 1 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-5-psi-1
+    channels: 5
+    rho: [psi(0), psi(1)]
+    expected: 2 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-6-psi-1
+    channels: 6
+    rho: [psi(0), psi(1)]
+    expected: 3 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-7-psi-1
+    channels: 7
+    rho: [psi(0), psi(1)]
+    expected: 4 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-8-psi-1
+    channels: 8
+    rho: [psi(0), psi(1)]
+    expected: 2 * [psi(0)] + 2 * [psi(1)]
+  -
+    id: channels-9-psi-1
+    channels: 9
+    rho: [psi(0), psi(1)]
+    expected: 3 * [psi(0)] + 2 * [psi(1)]
+  -
+    id: channels-10-psi-1
+    channels: 10
+    rho: [psi(0), psi(1)]
+    expected: 4 * [psi(0)] + 2 * [psi(1)]
+  -
+    id: channels-4-psi-1-gated
+    channels: 4
+    rho: [psi(0), psi(1)]
+    gated: True
+    expected: 4 * [psi(0)]
+  -
+    id: channels-5-psi-1-gated
+    channels: 5
+    rho: [psi(0), psi(1)]
+    gated: True
+    strict_err:
+      type: ValueError
+      message: can't exactly fill 5 channels
+    expected: 4 * [psi(0)]
+  -
+    id: channels-6-psi-1-gated
+    channels: 6
+    rho: [psi(0), psi(1)]
+    gated: True
+    expected: 3 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-7-psi-1-gated
+    channels: 7
+    rho: [psi(0), psi(1)]
+    gated: True
+    strict_err:
+      type: ValueError
+      message: can't exactly fill 7 channels
+    expected: 3 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-8-psi-1-gated
+    channels: 8
+    rho: [psi(0), psi(1)]
+    gated: True
+    expected: 5 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-9-psi-1-gated
+    channels: 9
+    rho: [psi(0), psi(1)]
+    gated: True
+    strict_err:
+      type: ValueError
+      message: can't exactly fill 9 channels
+    expected: 5 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-10-psi-1-gated
+    channels: 10
+    rho: [psi(0), psi(1)]
+    gated: True
+    expected: 7 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-11-psi-1-gated
+    channels: 11
+    rho: [psi(0), psi(1)]
+    gated: True
+    strict_err:
+      type: ValueError
+      message: can't exactly fill 11 channels
+    expected: 7 * [psi(0)] + 1 * [psi(1)]
+  -
+    id: channels-12-psi-1-gated
+    channels: 12
+    rho: [psi(0), psi(1)]
+    gated: True
+    expected: 6 * [psi(0)] + 2 * [psi(1)]
+  -
+    id: channels-13-psi-1-gated
+    channels: 13
+    rho: [psi(0), psi(1)]
+    gated: True
+    strict_err:
+      type: ValueError
+      message: can't exactly fill 13 channels
+    expected: 6 * [psi(0)] + 2 * [psi(1)]

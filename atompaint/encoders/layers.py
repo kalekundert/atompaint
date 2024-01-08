@@ -1,3 +1,5 @@
+import numpy as np
+
 from escnn.nn import (
         FieldType, FourierFieldType,
         R3Conv, IIDBatchNorm3d, FourierPointwise, GatedNonLinearity1,
@@ -5,7 +7,12 @@ from escnn.nn import (
 from atompaint.nonlinearities import add_gates
 from atompaint.utils import get_scalar
 from atompaint.type_hints import Grid
-from more_itertools import take
+from itertools import repeat
+from more_itertools import take, flatten, zip_broadcast
+
+from escnn.gspaces import GSpace
+from escnn.group import Representation
+from collections.abc import Iterable, Sequence
 
 def make_conv_layer(
         in_type: FieldType,
@@ -81,6 +88,80 @@ def make_polynomial_field_types(gspace, channels, terms):
 
         rho = take(terms_i, iter_polynomial_representations(gspace.fibergroup))
         yield FieldType(gspace, channels_i * list(rho))
+
+def make_exact_polynomial_field_types(
+        gspace: GSpace,
+        channels: Iterable[int],
+        terms: int | Iterable[int],
+        gated: bool = False,
+        strict: bool = True,
+):
+    for channels_i, terms_i in zip_broadcast(channels, terms):
+        polynomial_i = list(take(
+            terms_i,
+            iter_polynomial_representations(gspace.fibergroup),
+        ))
+        yield make_exact_width_field_type(
+                gspace=gspace, 
+                channels=channels_i,
+                representations=polynomial_i,
+                gated=gated,
+                strict=strict,
+        )
+
+def make_exact_width_field_type(
+        gspace: GSpace,
+        channels: int,
+        representations: Sequence[Representation],
+        gated: bool = False,
+        strict: bool = True,
+):
+    """
+    Construct a field type by repeatedly combining copies of the given 
+    representation until the whole field type has the requested number of 
+    channels.
+
+    - By default, it is an error if it is not possible to create a field type 
+      with the correct number of channels.
+
+    - After each iteration, the last representation is removed from 
+      consideration.  Iteration stops when no representations remain.  It's a 
+      good idea to sort the representations from smallest (at the front) to 
+      largest (at the back).  This makes it easier to evenly fill the requested 
+      number of channels.
+    """
+    rho_multiplicities = np.zeros(len(representations), dtype=int)
+    gate_multiplicity = 0
+    channels_remaining = channels
+    sizes = [(x.size + gated) for x in representations]
+
+    for j in range(len(representations), 0, -1):
+        size = sum(sizes[:j])
+        n = channels_remaining // size
+        rho_multiplicities[:j] += n
+        gate_multiplicity += gated and n * j
+        channels_remaining -= n * size
+
+    if channels_remaining and strict:
+        raise ValueError(f"can't exactly fill {channels} channels with representations of the following sizes: {sizes}")
+
+    # Take care to keep each term contiguous with all the others of the 
+    # same type/dimension.  This allows the gated nonlinearity to run 
+    # faster, because it can use slices rather than indices.
+
+    # When using gates, take care to put the gates before the 
+    # representations being gated.  This is what the `GatedNonLinearity1` 
+    # class expects, so respecting this order here makes things just work.
+
+    gates = repeat(
+            gspace.fibergroup.trivial_representation,
+            gate_multiplicity,
+    )
+    rho = flatten(
+            n * [term]
+            for n, term in zip(rho_multiplicities, representations)
+    )
+    return FieldType(gspace, [*gates, *rho])
 
 def iter_polynomial_representations(group):
     # Avoid generating the tensor product of the zeroth and first irrep.  The 
