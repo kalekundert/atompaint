@@ -1,11 +1,10 @@
-import torch
 from atompaint.encoders.resnet import (
-        ResNet, make_alpha_block, make_escnn_example_block,
+        ResNet, make_escnn_example_block, make_alpha_block, make_beta_block,
 )
 from atompaint.encoders.layers import (
-        make_conv_layer, make_conv_fourier_layer,
+        make_conv_layer, make_conv_fourier_layer, make_conv_gated_layer,
         make_top_level_field_types, make_fourier_field_types,
-        make_polynomial_field_types,
+        make_polynomial_field_types, make_exact_polynomial_field_types,
 )
 from atompaint.vendored.escnn_nn_testing import (
         check_equivariance, get_exact_3d_rotations,
@@ -97,3 +96,40 @@ def test_alpha_resnet_equivariance():
             atol=1e-4,
     )
 
+def test_beta_resnet_equivariance():
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+
+    # I could make the network smaller by using fewer than 3 terms, but I like 
+    # the idea of using the same number of terms here as I plan to for real.  
+    # Plus, 16 channels is already smaller than what I have in the other tests.
+
+    resnet = ResNet(
+            outer_types = make_top_level_field_types(
+                    gspace=gspace, 
+                    channels=[6, 16, 16],
+                    make_nontrivial_field_types=partial(
+                        make_exact_polynomial_field_types,
+                        terms=3,
+                        gated=True,
+                    ),
+            ),
+            inner_types = make_exact_polynomial_field_types(
+                    gspace=gspace,
+                    channels=[16],
+                    terms=3,
+                    gated=True,
+            ),
+            initial_layer_factory=make_conv_gated_layer,
+            block_factory=make_beta_block,
+            block_repeats=2,
+            pool_factors=[2],
+    )
+
+    check_equivariance(
+            resnet,
+            in_tensor=(2, 6, 7, 7, 7),
+            out_shape=(2, 16, 2, 2, 2),
+            group_elements=get_exact_3d_rotations(so3),
+            atol=1e-4,
+    )
