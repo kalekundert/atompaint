@@ -38,15 +38,16 @@ from atompaint.datasets.voxelize import ImageParams, Grid
 from atompaint.datasets.samplers import RangeSampler, InfiniteSampler
 from atompaint.encoders.cnn import FourierCnn, NonequivariantCnn
 from atompaint.encoders.resnet import (
-        ResNet, make_escnn_example_block, make_alpha_block,
+        ResNet, make_escnn_example_block, make_alpha_block, make_beta_block,
 )
 from atompaint.encoders.densenet import (
         DenseNet, make_fourier_growth_type,
 )
 from atompaint.encoders.layers import (
-        make_conv_layer, make_conv_fourier_layer, make_gated_nonlinearity,
+        make_conv_layer, make_conv_fourier_layer, make_conv_gated_layer,
+        make_gated_nonlinearity,
         make_top_level_field_types, make_polynomial_field_types,
-        make_fourier_field_types,
+        make_fourier_field_types, make_exact_polynomial_field_types,
 )
 from atompaint.pooling import FourierExtremePool3D
 from atompaint.nonlinearities import leaky_hard_shrink, first_hermite
@@ -230,8 +231,8 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
             resnet_outer_channels: list[int],
             resnet_inner_channels: list[int],
             polynomial_terms: int | list[int] = 0,
-            max_frequency: int,
-            grid: str,
+            max_frequency: int = 0,
+            grid: Optional[str] = None,
             block_repeats: int,
             pool_factors: int | list[int],
             final_conv: int = 0,
@@ -240,9 +241,13 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
     ):
         gspace = rot3dOnR3()
         so3 = gspace.fibergroup
-        grid_elements = parse_so3_grid(so3, grid)
+        grid_elements = parse_so3_grid(so3, grid) if grid else None
 
         if block_type == 'escnn':
+            assert polynomial_terms
+            assert max_frequency > 0
+            assert grid
+
             outer_types = make_top_level_field_types(
                     gspace=gspace, 
                     channels=resnet_outer_channels,
@@ -263,6 +268,10 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
             )
 
         elif block_type == 'alpha':
+            assert polynomial_terms == 0
+            assert max_frequency > 0
+            assert grid
+
             outer_types = make_top_level_field_types(
                     gspace=gspace, 
                     channels=resnet_outer_channels,
@@ -284,7 +293,31 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
                     make_alpha_block,
                     grid=grid_elements,
             )
-            assert polynomial_terms == 0
+
+        elif block_type == 'beta':
+            assert polynomial_terms
+            assert max_frequency == 0
+            assert grid is None
+
+            # Beta is closely modeled on the Wide ResNet architecture (WRN).
+
+            outer_types = make_top_level_field_types(
+                    gspace=gspace, 
+                    channels=resnet_outer_channels,
+                    make_nontrivial_field_types=partial(
+                        make_exact_polynomial_field_types,
+                        terms=polynomial_terms,
+                        gated=True,
+                    ),
+            )
+            inner_types = make_exact_polynomial_field_types(
+                    gspace=gspace,
+                    channels=resnet_inner_channels,
+                    terms=polynomial_terms,
+                    gated=True,
+            )
+            initial_layer_factory = make_conv_gated_layer
+            block_factory = make_beta_block
 
         else:
             raise ValueError(f"unknown block type: {block_type}")

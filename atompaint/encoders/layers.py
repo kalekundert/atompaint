@@ -62,6 +62,26 @@ def make_conv_fourier_layer(
             function=nonlinearity,
     )
 
+def make_conv_gated_layer(
+        in_type: FieldType,
+        out_type: FieldType,
+        *,
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: int = 0,
+):
+    gate_type = add_gates(out_type)
+    yield R3Conv(
+            in_type,
+            gate_type,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            bias=False,
+    )
+    yield IIDBatchNorm3d(gate_type)
+    yield GatedNonLinearity1(gate_type)
+
 def make_gated_nonlinearity(out_type):
     in_type = add_gates(out_type)
     return GatedNonLinearity1(in_type)
