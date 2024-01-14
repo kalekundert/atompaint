@@ -128,8 +128,13 @@ def load_train_config(
         log.info("reducing batch size from %d to %d because dry run", conf['data']['batch_size'], 2)
         conf['data']['batch_size'] = 2
 
+    data_kwargs = conf.pop('data')
+
+    if 'origins_path' in data_kwargs:
+        data_kwargs['origins_path'] = path.parent / data_kwargs['origins_path']
+
     model = model_factory(**conf.pop('model'))
-    data = data_factory(**conf.pop('data'))
+    data = data_factory(**data_kwargs)
 
     if conf:
         raise ConfigError(f"{path}: unexpected keys: {', '.join(map(repr, conf))}")

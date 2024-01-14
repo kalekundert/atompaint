@@ -528,7 +528,7 @@ class DataModule(pl.LightningDataModule):
         self._tmp_origins_path = copy_origins_to_tmp(Path(origins_path))
 
         origin_sampler = SqliteOriginSampler(self._tmp_origins_path.name)
-        img_params = ImageParams(
+        self.img_params = ImageParams(
                 grid=Grid(
                     length_voxels=grid_length_voxels,
                     resolution_A=grid_resolution_A,
@@ -537,7 +537,7 @@ class DataModule(pl.LightningDataModule):
                 element_radii_A=element_radii_A,
         )
         view_frames_ab = make_cube_face_frames_ab(
-                img_params.grid.length_A,
+                self.img_params.grid.length_A,
                 view_padding_A,
         )
 
@@ -550,7 +550,7 @@ class DataModule(pl.LightningDataModule):
         dataset = CnnViewIndexDataset(
                 frames_ab=view_frames_ab,
                 origin_sampler=origin_sampler,
-                img_params=img_params,
+                img_params=self.img_params,
                 recording_path=recording_path,
         )
 
