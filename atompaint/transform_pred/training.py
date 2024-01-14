@@ -22,6 +22,7 @@ Options:
 import lightning.pytorch as pl
 import torch.nn.functional as F
 import os
+import logging
 
 from .models import (
         TransformationPredictor, ViewPairEncoder, ViewPairClassifier,
@@ -90,6 +91,8 @@ NONLINEARITIES = {
         'tanh': F.tanh,
         'hermite': first_hermite,
 }
+
+log = logging.getLogger(__name__)
 
 class PredictorModule(EvalModeCheckpointMixin, pl.LightningModule):
 
@@ -555,6 +558,7 @@ class DataModule(pl.LightningDataModule):
         )
 
         def make_dataloader(sampler):
+            log.info("making dataloader: num_workers=%d", num_workers)
 
             return DataLoader(
                     dataset=dataset,
