@@ -156,6 +156,7 @@ class CnnPredictor(PredictorModule, factory_key='cnn'):
             conv_stride: int | list[int],
             conv_padding: int | list[int],
             mlp_channels: int | list[int],
+            equivariant_mlp: bool = True,
     ):
         encoder = ViewPairEncoder(
                 FourierCnn(
@@ -167,22 +168,34 @@ class CnnPredictor(PredictorModule, factory_key='cnn'):
                 ),
         )
         so3 = encoder.out_type.fibergroup
-        classifier = ViewPairClassifier(
-                layer_types=make_fourier_classifier_field_types(
-                    in_type=encoder.out_type,
-                    channels=mlp_channels,
-                    max_frequencies=frequencies,
-                ),
-                layer_factory=partial(
-                    make_linear_fourier_layer,
-                    ift_grid=so3.grid('thomson_cube', N=4),
-                ),
-                logits_max_freq=frequencies,
 
-                # This has to be the same as the grid used to construct the 
-                # dataset.  For now, I've just hard-coded the 'cube' grid.
-                logits_grid=so3.sphere_grid('cube'),
-        )
+        if equivariant_mlp:
+            classifier = ViewPairClassifier(
+                    layer_types=make_fourier_classifier_field_types(
+                        in_type=encoder.out_type,
+                        channels=mlp_channels,
+                        max_frequencies=frequencies,
+                    ),
+                    layer_factory=partial(
+                        make_linear_fourier_layer,
+                        ift_grid=so3.grid('thomson_cube', N=4),
+                    ),
+                    logits_max_freq=frequencies,
+
+                    # This has to be the same as the grid used to construct the 
+                    # dataset.  For now, I've just hard-coded the 'cube' grid.
+                    logits_grid=so3.sphere_grid('cube'),
+            )
+        else:
+            assert mlp_channels[-1] == 6
+            classifier = NonequivariantViewPairClassifier(
+                    channels=mlp_channels,
+                    layer_factory=partial(
+                        make_nonequivariant_linear_relu_dropout_layer,
+                        drop_rate=0.2,
+                    ),
+            )
+
         model = TransformationPredictor(
                 encoder=encoder,
                 classifier=classifier,
