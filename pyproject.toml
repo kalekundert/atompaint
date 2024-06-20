@@ -20,7 +20,7 @@ classifiers = [
 ]
 dependencies = [
   'docopt',
-  'escnn @ git+https://github.com/kalekundert/escnn@9094a5f2c424a765c5ebaabe9d79e7e06a29e91e',
+  'escnn @ git+https://github.com/kalekundert/escnn@507a2590876e3f4d3c5d11e448852c413eef65b0',
   'lightning',
   'more_itertools',
   'nestedtext',
