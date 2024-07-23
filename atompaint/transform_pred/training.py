@@ -30,13 +30,6 @@ from .models import (
         make_fourier_classifier_field_types, make_linear_fourier_layer,
         make_nonequivariant_linear_relu_dropout_layer,
 )
-from .datasets.origins import SqliteOriginSampler, copy_origins_to_tmp
-from .datasets.classification import (
-        CnnViewIndexDataset, make_cube_face_frames_ab,
-)
-from atompaint.config import load_train_config
-from atompaint.datasets.voxelize import ImageParams, Grid
-from atompaint.datasets.samplers import RangeSampler, InfiniteSampler
 from atompaint.encoders.cnn import FourierCnn, NonequivariantCnn
 from atompaint.encoders.resnet import (
         ResNet, make_escnn_example_block, make_alpha_block, make_beta_block,
@@ -504,127 +497,8 @@ class DenseNetPredictor(PredictorModule, factory_key='densenet'):
         )
         super().__init__(model)
 
-class DataModule(pl.LightningDataModule):
-
-    def __init__(
-            self, *,
-            # Origin parameters
-            origins_path: str,
-
-            # Image parameters
-            grid_length_voxels: int,
-            grid_resolution_A: float,
-            element_channels: list[str],
-            element_radii_A: Optional[float],
-
-            # View pair parameters
-            view_padding_A: float,
-            recording_path: Optional[Path] = None,
-
-            # Data loader parameters
-            batch_size: int,
-            train_epoch_size: int,
-            val_epoch_size: int = 0,
-            test_epoch_size: int = 0,
-            num_workers: Optional[int] = None,
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-
-        # - We aren't going to manually clean up the temporary directory that
-        #   we're copying the origins into; we're relying on it cleaning itself
-        #   up when the whole data module is finalized (i.e. right before the
-        #   interpreter shuts down).  This is not guaranteed to happen, so the
-        #   temporary file might persist until the OS cleans it up.
-        #
-        # - We have to store the temporary file in an instance attribute, even
-        #   though we won't reference it again.  If we used a local variable,
-        #   the file would get cleaned up as soon as that variable went out of 
-        #   scope (i.e. at the end of the constructor).
-        self._tmp_origins_path = copy_origins_to_tmp(Path(origins_path))
-
-        origin_sampler = SqliteOriginSampler(self._tmp_origins_path.name)
-        self.img_params = ImageParams(
-                grid=Grid(
-                    length_voxels=grid_length_voxels,
-                    resolution_A=grid_resolution_A,
-                ),
-                channels=element_channels,
-                element_radii_A=element_radii_A,
-        )
-        view_frames_ab = make_cube_face_frames_ab(
-                self.img_params.grid.length_A,
-                view_padding_A,
-        )
-
-        if num_workers is None:
-            try:
-                num_workers = int(os.environ['SLURM_JOB_CPUS_PER_NODE'])
-            except KeyError:
-                num_workers = os.cpu_count()
-
-        dataset = CnnViewIndexDataset(
-                frames_ab=view_frames_ab,
-                origin_sampler=origin_sampler,
-                img_params=self.img_params,
-                recording_path=recording_path,
-        )
-
-        def make_dataloader(sampler):
-            log.info("making dataloader: num_workers=%d", num_workers)
-
-            return DataLoader(
-                    dataset=dataset,
-                    sampler=sampler,
-                    batch_size=batch_size,
-                    num_workers=num_workers,
-                    
-                    # For some reason I don't understand, my worker processes
-                    # get killed by SIGABRT if I use the 'fork' context.  The
-                    # behavior is very sensitive to all sorts of small changes
-                    # in the code (e.g. `debug()` calls), which makes me think
-                    # it's some sort of race condition.
-                    multiprocessing_context='spawn' if num_workers else None,
-                    persistent_workers=True,
-
-                    pin_memory=True,
-                    drop_last=True,
-            )
-
-        i = 0
-        j = i + val_epoch_size
-        k = j + test_epoch_size
-
-        self._val_dataloader = make_dataloader(RangeSampler(i, j))
-        self._test_dataloader = make_dataloader(RangeSampler(j, k))
-        self._train_dataloader = make_dataloader(
-                InfiniteSampler(train_epoch_size, start_index=k),
-        )
-
-    def train_dataloader(self):
-        return self._train_dataloader
-
-    def val_dataloader(self):
-        return self._val_dataloader
-
-    def test_dataloader(self):
-        return self._test_dataloader
-
-def main():
-    args = docopt(__doc__)
-    config_path = Path(args['<config>'])
-    c = load_train_config(
-            config_path, predictor_factory, DataModule,
-            dry_run=args['--dry-run'],
-    )
-    c.trainer.fit(c.model, c.data, ckpt_path='last')
-
 def predictor_factory(**kwargs):
     factory_key = kwargs.pop('architecture', 'cnn')
     factory = PREDICTOR_MODULES[factory_key]
     return factory(**kwargs)
-
-if __name__ == '__main__':
-    main()
-
 

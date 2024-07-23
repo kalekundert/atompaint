@@ -20,8 +20,11 @@ classifiers = [
 ]
 dependencies = [
   'docopt',
+  'einops',
   'escnn @ git+https://github.com/kalekundert/escnn@507a2590876e3f4d3c5d11e448852c413eef65b0',
   'lightning',
+  'macromol_gym_unsupervised',
+  'macromol_voxelize',
   'more_itertools',
   'nestedtext',
   'numpy',
@@ -29,6 +32,7 @@ dependencies = [
   'pandas',
   'pandera',
   'pdbecif',
+  'pipeline_func',
   'pyarrow',
   'pymixbox',
   'pyyaml',
@@ -37,6 +41,7 @@ dependencies = [
   'tensorboard',
   'torch',
   'torchmetrics',
+  'torchyield',
   'tqdm',
 ]
 
@@ -49,6 +54,7 @@ test = [
   'hypothesis',
   'matplotlib',
   'colorcet',
+  'torchtest',
 ]
 doc = [
   'sphinx',
@@ -63,23 +69,17 @@ doc = [
 'Continuous Integration' = 'https://github.com/kalekundert/atompaint/actions'
 'Test Coverage' = 'https://coveralls.io/github/kalekundert/atompaint'
 
-[project.scripts]
-ap_sbatch = "atompaint.hpc.slurm.sbatch:main"
-ap_choose_origins = "atompaint.transform_pred.datasets.cli:main"
-ap_transform_pred = "atompaint.transform_pred.training:main"
-ap_plot_metrics = "atompaint.analysis.plot_metrics:main"
-
 [tool.setuptools]
 packages = ["atompaint"]
 
 [tool.setuptools.dynamic]
 version = {attr = "atompaint.__version__"}
 
-[tool.ruff]
+[tool.ruff.lint]
 select = ["F"]
 ignore = ["F405", "F403"]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 
 [tool.pytest.ini_options]

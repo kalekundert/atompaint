@@ -56,6 +56,8 @@ class TransformationPredictor(Module):
         latent = self.encoder(input)
         return self.classifier(latent)
 
+    # This confuses `torchlens`.  Definitely a `torchlens` bug, but easiest to 
+    # comment out here when necessary.
     @property
     def in_type(self):
         return self.encoder.in_type

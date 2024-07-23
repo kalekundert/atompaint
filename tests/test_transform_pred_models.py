@@ -3,14 +3,9 @@ import torch
 import pytest
 import parametrize_from_file as pff
 
-from test_datasets_coords import coords, vector
-from test_transform_pred_datasets_classification import check_origins
 from atompaint.transform_pred.models import (
         ViewPairEncoder, ViewPairClassifier,
         make_fourier_classifier_field_types, make_linear_fourier_layer,
-)
-from atompaint.transform_pred.datasets.classification import (
-        make_view_frames_ab,
 )
 from atompaint.encoders.cnn import FourierCnn
 from atompaint.vendored.escnn_nn_testing import get_exact_3d_rotations
@@ -48,12 +43,6 @@ def classifier_equivariance(*, require_grids=None):
         grid = so3.sphere_grid(grid_name)
         g = so3.element(g_rot_vec, 'EV')
         
-        # Make sure the grid points are what they're supposed to be.  This 
-        # depends on the internal implementation of `so3.sphere_grid()`, and if 
-        # it changes for any reason, the `g_permut` test parameter will have to 
-        # be updated manually.
-        check_origins(make_view_frames_ab(grid, 1), origins)
-
         return so3, grid_name, grid, g, g_permut
 
     return schema

@@ -1,8 +1,12 @@
 import parametrize_from_file as pff
+import macromol_dataframe as mmdf
+import numpy as np
 
 from pytest import approx
 from escnn.group import octa_group
 from functools import cache
+from io import StringIO
+
 
 with_py = pff.Namespace()
 with_math = pff.Namespace('from math import *')
@@ -30,6 +34,29 @@ def get_exact_rotations(group):
 
     assert len(exact_rots) > 1
     return exact_rots
+
+def matrix(params):
+    io = StringIO(params)
+    return np.loadtxt(io, dtype=float)
+
+def vector(params):
+    return np.array([with_math.eval(x) for x in params.split()])
+
+def frame(params):
+    origin = coord(params['origin'])
+    rot_vec_rad = vector(params['rot_vec_rad'])
+    return mmdf.make_coord_frame_from_rotation_vector(origin, rot_vec_rad)
+
+def frames(params):
+    return [frame(x) for x in params]
+
+def coord(params):
+    return matrix(params)
+
+def coords(params):
+    coords = matrix(params)
+    coords.shape = (1, *coords.shape)[-2:]
+    return coords
 
 def integers(params):
     return [int(x) for x in params.split()]

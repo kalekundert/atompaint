@@ -1,9 +1,0 @@
-[submodule "atompaint/vendored/PDB_ligand_quality_composite_score"]
-	path = atompaint/vendored/PDB_ligand_quality_composite_score
-	url = https://github.com/rcsb/PDB_ligand_quality_composite_score.git
-[submodule "atompaint/vendored/Eigen"]
-	path = atompaint/vendored/Eigen
-	url = https://gitlab.com/libeigen/eigen.git
-[submodule "atompaint/vendored/overlap"]
-	path = atompaint/vendored/overlap
-	url = https://github.com/severinstrobl/overlap.git
