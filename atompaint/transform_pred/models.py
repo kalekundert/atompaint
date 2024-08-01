@@ -1,6 +1,6 @@
 import torch
 
-from atompaint.encoders.layers import make_fourier_field_types
+from atompaint.field_types import make_fourier_field_types
 from atompaint.type_hints import Grid, LayerFactory
 from escnn.nn import (
         FieldType, FourierFieldType, GeometricTensor, InverseFourierTransform,

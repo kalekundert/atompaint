@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torchyield as ty
 
-from atompaint.diffusion.time_embedding import AddTimeToImage
+from atompaint.time_embedding import AddTimeToImage
 from more_itertools import pairwise
 from pipeline_func import f
 

@@ -1,5 +1,3 @@
-import torch
-
 from atompaint.utils import get_scalar
 from atompaint.type_hints import LayerFactory
 from escnn.group import Representation

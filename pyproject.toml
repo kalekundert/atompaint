@@ -85,7 +85,13 @@ ignore = ["F405", "F403"]
 [tool.pytest.ini_options]
 addopts = "--doctest-modules --doctest-glob='*.rst'"
 doctest_optionflags = 'NORMALIZE_WHITESPACE'
-filterwarnings = 'ignore:.*Lazy modules are a new feature.*:UserWarning:torch.nn.modules.lazy'
+filterwarnings = [
+  'ignore:.*Lazy modules are a new feature.*:UserWarning:torch.nn.modules.lazy',
+  'ignore:Deprecated call to `pkg_resources.declare_namespace:DeprecationWarning',
+  'ignore:pkg_resources is deprecated as an API:DeprecationWarning',
+  'ignore::DeprecationWarning:torch',
+  'ignore::DeprecationWarning:autograd',
+]
 
 [tool.coverage.run]
 branch = true

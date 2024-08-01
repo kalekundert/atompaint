@@ -21,7 +21,6 @@ Options:
 
 import lightning.pytorch as pl
 import torch.nn.functional as F
-import os
 import logging
 
 from .models import (
@@ -40,8 +39,10 @@ from atompaint.encoders.densenet import (
 from atompaint.encoders.layers import (
         make_conv_layer, make_conv_fourier_layer, make_conv_gated_layer,
         make_gated_nonlinearity,
-        make_top_level_field_types, make_polynomial_field_types,
-        make_fourier_field_types, make_exact_polynomial_field_types,
+)
+from atompaint.field_types import (
+        make_top_level_field_types, make_fourier_field_types,
+        make_polynomial_field_types, make_exact_polynomial_field_types,
 )
 from atompaint.pooling import FourierExtremePool3D
 from atompaint.nonlinearities import leaky_hard_shrink, first_hermite
@@ -51,10 +52,7 @@ from escnn.nn import FourierPointwise
 from escnn.gspaces import rot3dOnR3
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
-from torch.utils.data import DataLoader
 from torchmetrics import Accuracy
-from docopt import docopt
-from pathlib import Path
 from functools import partial
 from typing import Optional
 

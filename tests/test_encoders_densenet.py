@@ -3,8 +3,8 @@ from atompaint.encoders.densenet import (
 )
 from atompaint.nonlinearities import leaky_hard_shrink
 from atompaint.pooling import FourierExtremePool3D, FourierAvgPool3D
-from atompaint.encoders.layers import (
-        make_conv_layer, make_gated_nonlinearity,
+from atompaint.encoders.layers import make_conv_layer, make_gated_nonlinearity
+from atompaint.field_types import (
         make_top_level_field_types, make_fourier_field_types,
 )
 from atompaint.vendored.escnn_nn_testing import (

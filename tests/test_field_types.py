@@ -1,7 +1,7 @@
 import pytest
 import parametrize_from_file as pff
 
-from atompaint.encoders.layers import (
+from atompaint.field_types import (
         make_exact_polynomial_field_types, make_exact_width_field_type,
 )
 from escnn.gspaces import rot3dOnR3

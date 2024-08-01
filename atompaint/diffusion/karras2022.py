@@ -14,11 +14,10 @@ class KarrasDiffusion(L.LightningModule):
     frameworks described in [Karras2022]_ and [Karras2023]_.
     """
 
-    def __init__(self, model, *, noise_embedding, opt_factory):
+    def __init__(self, model, *, opt_factory):
         super().__init__()
 
         self.model = model
-        self.noise_embedding = noise_embedding
         self.optimizer = opt_factory(model.parameters())
 
         # [Karras2022], Table 1
@@ -58,11 +57,10 @@ class KarrasDiffusion(L.LightningModule):
         c_in = 1 / torch.sqrt(self.sigma_data**2 + sigma**2)
         c_out = sigma * sigma_data / torch.sqrt(sigma**2 + sigma_data**2)
         c_skip = sigma_data**2 / (sigma**2 + sigma_data**2)
-        c_noise = self.noise_embedding(sigma.flatten())
 
         x_pred = (
                 c_skip * x_noisy +
-                c_out * self.model(c_in * x_noisy, c_noise)
+                c_out * self.model(c_in * x_noisy, sigma.flatten())
         )
 
         weight = (sigma**2 + sigma_data**2) / (sigma * sigma_data)**2
@@ -77,10 +75,10 @@ class KarrasDiffusion(L.LightningModule):
 
     def validation_step(self, x):
         loss = self.forward(x)
-        self.log('train/loss', loss, on_epoch=True)
+        self.log('val/loss', loss, on_epoch=True)
         return loss
 
     def test_step(self, x):
         loss = self.forward(x)
-        self.log('train/loss', loss, on_epoch=True)
+        self.log('test/loss', loss, on_epoch=True)
         return loss

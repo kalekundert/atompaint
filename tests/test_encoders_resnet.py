@@ -3,6 +3,8 @@ from atompaint.encoders.resnet import (
 )
 from atompaint.encoders.layers import (
         make_conv_layer, make_conv_fourier_layer, make_conv_gated_layer,
+)
+from atompaint.field_types import (
         make_top_level_field_types, make_fourier_field_types,
         make_polynomial_field_types, make_exact_polynomial_field_types,
 )
