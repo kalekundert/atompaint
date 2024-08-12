@@ -1,5 +1,6 @@
 import lightning as L
 import torch
+import numpy as np
 import macromol_voxelize as mmvox
 import logging
 
@@ -118,7 +119,27 @@ def _prepare_inputs(x):
     noise = rng.normal(size=x_clean.shape)
     noise = torch.from_numpy(noise).to(dtype=x_clean.dtype)
 
-    t_uniform = rng.uniform()
+    # It's important to use `rng.random()` instead of `rng.uniform()` here.  
+    # The reason is that the [Karras2022] algorithm requires uniform random 
+    # 32-bit floating point values in the range [0, 1) (i.e. excluding 1), and 
+    # only `rng.random()` can satisfy this invariant.
+    #
+    # The reason why [Karras2022] requires values <1 is that, when trying to 
+    # convert a randomly distributed value to a normally distributed one, 1 
+    # becomes +inf.  Needless to say, +inf leads to more problems and 
+    # ultimately crashes the training run.  (Specifically, it leads to NaNs in 
+    # the batch normalization routines.)  Note that 0, which becomes -inf, 
+    # doesn't cause problems, because the algorithm uses the exponent of this 
+    # value.
+    #
+    # The reason why `rng.uniform()` fails to satisfy the above invariant is 
+    # that it can only generate 64-bit values.  Since we need 32-bit values, we 
+    # have to downcast the output of this function.  Some 64-bit values that 
+    # are less than 1 become exactly 1 when downcasted to 32-bits, thus 
+    # violating the invariant.
+    t_uniform = rng.random(dtype=np.float32)
     t_uniform = torch.tensor(t_uniform)
+
+    assert torch.all(t_uniform < 1)
 
     return x_clean, noise, t_uniform
