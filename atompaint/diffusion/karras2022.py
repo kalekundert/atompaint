@@ -14,7 +14,7 @@ class KarrasDiffusion(L.LightningModule):
     frameworks described in [Karras2022]_ and [Karras2023]_.
     """
 
-    def __init__(self, model, *, opt_factory):
+    def __init__(self, model, *, opt_factory, sigma_data=1):
         super().__init__()
 
         self.model = model
@@ -24,17 +24,10 @@ class KarrasDiffusion(L.LightningModule):
         self.P_mean = -1.2
         self.P_std = 1.2
 
-        # Expt 65
         self.register_buffer(
                 'sigma_data',
-                torch.tensor([
-                    0.068791,
-                    0.036372,
-                    0.038710,
-                    0.006235,
-                    0.006190,
-                    0.001196,
-                ]).reshape(-1, 1, 1, 1),
+                torch.tensor(sigma_data).float().reshape(-1, 1, 1, 1),
+                persistent=False,
         )
 
     def configure_optimizers(self):
