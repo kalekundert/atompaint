@@ -37,6 +37,7 @@ class SinusoidalEmbedding(nn.Module):
     def __init__(
             self,
             out_dim: int,
+            *,
             min_wavelength: float = 4,
             max_wavelength: float = 1e4/tau,
     ):
