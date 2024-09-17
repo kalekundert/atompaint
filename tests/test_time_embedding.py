@@ -5,7 +5,7 @@ import atompaint.time_embedding as ap
 from torchtest import assert_vars_change
 from escnn.nn import (
         FourierFieldType, GeometricTensor,
-        InverseFourierTransform, FourierTransform, FourierPointwise,
+        FourierPointwise,
 )
 from escnn.gspaces import rot3dOnR3
 from atompaint.vendored.escnn_nn_testing import (
@@ -231,7 +231,7 @@ def test_gated_time_activation_equivariance():
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
-    emb = SinusoidalEmbedding(512)
+    emb = ap.SinusoidalEmbedding(512)
     t = torch.arange(128)
     t_emb = emb(t)
 

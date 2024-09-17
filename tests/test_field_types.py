@@ -60,7 +60,7 @@ def test_make_exact_width_field_type(channels, rho, gated, strict, strict_err, e
 def assert_representations_match(field_type, expected_representations):
     from pprint import pformat
 
-    __traceback_hide__ = True 
+    __traceback_hide__ = True  # noqa: F841
 
     error = AssertionError(f"""\
 field types are not identical:

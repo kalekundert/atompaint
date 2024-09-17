@@ -67,6 +67,7 @@ doc = [
 [tool.ruff.lint]
 select = ["F"]
 ignore = ["F405", "F403"]
+exclude = ['_*.py']
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]

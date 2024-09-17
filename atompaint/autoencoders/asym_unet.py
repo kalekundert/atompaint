@@ -6,12 +6,11 @@ from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.time_embedding import AddTimeToImage
 from atompaint.upsampling import Upsample3d
 from einops import rearrange
-from dataclasses import dataclass
 from more_itertools import pairwise
 from pipeline_func import f
 from more_itertools import mark_ends
 
-from typing import Literal, Callable, Optional
+from typing import Literal, Callable
 from torchyield import LayerFactory
 
 class AsymUNet(UNet):

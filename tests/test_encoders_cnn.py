@@ -1,4 +1,3 @@
-import torch
 
 from atompaint.encoders.cnn import IcosahedralCnn, FourierCnn
 from atompaint.vendored.escnn_nn_testing import check_equivariance

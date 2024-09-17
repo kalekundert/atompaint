@@ -2,7 +2,7 @@ from atompaint.encoders.densenet import (
         DenseNet, DenseBlock, DenseLayer, make_fourier_growth_type,
 )
 from atompaint.nonlinearities import leaky_hard_shrink
-from atompaint.pooling import FourierExtremePool3D, FourierAvgPool3D
+from atompaint.pooling import FourierExtremePool3D
 from atompaint.layers import conv_layer, gated_layer
 from atompaint.field_types import (
         make_top_level_field_types, make_fourier_field_types,
@@ -10,7 +10,7 @@ from atompaint.field_types import (
 from atompaint.vendored.escnn_nn_testing import (
         check_equivariance, get_exact_3d_rotations,
 )
-from escnn.nn import FourierPointwise, R3Conv
+from escnn.nn import FourierPointwise
 from escnn.gspaces import rot3dOnR3
 from functools import partial
 

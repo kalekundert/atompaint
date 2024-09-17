@@ -2,9 +2,7 @@ import parametrize_from_file as pff
 import macromol_dataframe as mmdf
 import numpy as np
 
-from pytest import approx
 from escnn.group import octa_group
-from functools import cache
 from io import StringIO
 
 
