@@ -3,7 +3,7 @@ from atompaint.encoders.densenet import (
 )
 from atompaint.nonlinearities import leaky_hard_shrink
 from atompaint.pooling import FourierExtremePool3D, FourierAvgPool3D
-from atompaint.encoders.layers import make_conv_layer, make_gated_nonlinearity
+from atompaint.layers import conv_layer, gated_layer
 from atompaint.field_types import (
         make_top_level_field_types, make_fourier_field_types,
 )
@@ -55,9 +55,9 @@ def test_densenet_equivariance():
                 max_frequency=L,
                 unpack=True,
             ),
-            initial_layer_factory=make_conv_layer,
-            final_layer_factory=make_conv_layer,
-            nonlin1_factory=make_gated_nonlinearity,
+            initial_layer_factory=conv_layer,
+            final_layer_factory=conv_layer,
+            nonlin1_factory=gated_layer,
             nonlin2_factory=partial(
                 FourierPointwise,
                 grid=grid,
@@ -103,7 +103,7 @@ def test_dense_block_equivariance():
     block = DenseBlock(
             in_type=growth_type_factory(1),
             growth_type_factory=growth_type_factory,
-            nonlin1_factory=make_gated_nonlinearity,
+            nonlin1_factory=gated_layer,
             nonlin2_factory=partial(
                 FourierPointwise,
                 grid=grid,
@@ -137,7 +137,7 @@ def test_dense_layer_equivariance():
     layer = DenseLayer(
             in_type=growth_type_factory(3),
             growth_type_factory=growth_type_factory,
-            nonlin1_factory=make_gated_nonlinearity,
+            nonlin1_factory=gated_layer,
             nonlin2_factory=partial(
                 FourierPointwise,
                 grid=grid,

@@ -16,6 +16,29 @@ from escnn.group import GroupElement
 from typing import Optional, Union, List
 
 class FourierExtremePool3D(torch.nn.Module):
+    """
+    Downsample Fourier-domain input by extreme-pooling in the spatial domain.
+
+    This operation is equivariant with respect to both translation ans 
+    rotation.  Translational equivariance is maintained by performing the 
+    pooling with stride=1, then downsampling via a Gaussian blur filter.  
+    Rotational equivariance is maintained by performing the pooling in the 
+    spatial domain, where any operation that treats every spatial location in 
+    the same way will be equivariant.
+
+    Extreme-pooling is similar to max-pooling, except that the values with the 
+    greatest magnitudes---positive or negative---are the ones that are kept.  
+    This works better in the context of spatial domain values that will be 
+    subsequently returned to the Fourier domain.  Max-pooling would introduce a 
+    positive bias, which would result in the frequency=0 component of the 
+    Fourier vector being much greater in magnitude than the others.
+
+    After applying this layer, an input of size $N$ would be downsampled to 
+    $\frac{N - k}{s} + 1$, where $k$ and $s$ are the kernel size and stride 
+    parameters, respectively.  An error will be raised if the above expression 
+    doesn't result in a whole number, because such inputs would break 
+    rotational equivariance.
+    """
 
     def __init__(
             self,
@@ -27,7 +50,18 @@ class FourierExtremePool3D(torch.nn.Module):
             sigma: float = 0.6,
             normalize: bool = True,
             extra_irreps: List = [],
-    ):
+            check_input_shape: bool = True,
+            ):
+        """
+        Arguments:
+            check_input_shape:
+                This layer is only equivariant if the internal filters align 
+                perfectly with the edges of the inputs.  If this argument is 
+                True, then an error will be triggered if this is not the case.  
+                Otherwise, the check will be skipped.  Practically, the model 
+                may still be acceptably equivariant even with this condition 
+                violated.
+        """
         super().__init__()
 
         check_dimensions(in_type, d := 3)
@@ -35,6 +69,7 @@ class FourierExtremePool3D(torch.nn.Module):
         self.d = d
         self.in_type = in_type
         self.out_type = in_type
+        self.check_input_shape = check_input_shape
 
         self.ift = InverseFourierTransform(
                 in_type, grid,
@@ -58,17 +93,21 @@ class FourierExtremePool3D(torch.nn.Module):
         )
 
     def forward(self, x_hat_wrap: GeometricTensor) -> GeometricTensor:
-        # check that all spatial dimensions are odd.  Otherwise: edge effects.
+        w, h, d = x_hat_wrap.shape[-3:]
+        assert w == h == d
+        if self.check_input_shape:
+            assert (w - self.pool.kernel_size) % self.blur.stride == 0
+
         x_wrap = self.ift(x_hat_wrap)
 
-        b, c, g, *xyz = x_wrap.tensor.shape
-        x = x_wrap.tensor.reshape(b, c*g, *xyz)
+        b, c, g = x_wrap.tensor.shape[:3]
+        x = x_wrap.tensor.reshape(b, c*g, w, h, d)
 
         y = self.pool(x)
         y = self.blur(y)
 
-        b, _, *xyz = y.shape
-        y = y.reshape(b, c, g, *xyz)
+        w2, h2, d2 = y.shape[-3:]
+        y = y.reshape(b, c, g, w2, h2, d2)
         y_wrap = GridTensor(y, x_wrap.grid, x_wrap.coords)
 
         return self.ft(y_wrap)

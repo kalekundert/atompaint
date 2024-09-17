@@ -1,87 +1,46 @@
 import torch
 import torch.nn as nn
+import atompaint.autoencoders.unet as ap
 
-from atompaint.autoencoders.unet import UNet, UNetBlock
-from atompaint.field_types import (
-        make_fourier_field_types, add_gates, CastToFourierFieldType,
-)
-from atompaint.nonlinearities import leaky_hard_shrink
-from atompaint.pooling import FourierExtremePool3D
-from atompaint.upsampling import R3Upsampling
-from atompaint.time_embedding import SinusoidalEmbedding, LinearTimeActivation
-from atompaint.vendored.escnn_nn_testing import (
-        check_equivariance, get_exact_3d_rotations,
-)
-from escnn.nn import (
-        GeometricTensor, FourierPointwise,
-        SequentialModule, GatedNonLinearity1,
-)
+from escnn.nn import FieldType, GeometricTensor
 from escnn.gspaces import rot3dOnR3
-from torchtest import assert_vars_change
-from functools import partial
 
-from test_time_embedding import ModuleWrapper, InputWrapper
+def test_pop_cat_skip_asym():
+    x1 = torch.zeros(2, 3, 4, 4, 4)
+    x2 = torch.zeros(2, 3, 4, 4, 4)
+    t = torch.zeros(2)
 
-# I didn't include an equivariance test here because the model is big enough 
-# that its equivariance is too imperfect to test automatically.  However, in 
-# experiment #87, I manually confirmed that many different configurations of 
-# the U-Net are equivariant.
+    m = ap.PopCatSkip([nn.Identity()])
 
-def test_unet():
+    y = m(x1, t, skips=[x2])
+
+    assert y.shape == (2, 6, 4, 4, 4)
+
+def test_pop_cat_skip_semisym():
     gspace = rot3dOnR3()
-    so3 = gspace.fibergroup
-    grid = so3.grid(type='thomson_cube', N=4)
+    ft = FieldType(gspace, 3 * [gspace.trivial_repr])
 
-    unet = UNet(
-            field_types=make_fourier_field_types(
-                gspace, 
-                channels=[3, 1, 2],
-                max_frequencies=[0, 1, 1],
-            ),
-            block_factory=lambda in_type, out_type: UNetBlock(
-                in_type,
-                time_activation=LinearTimeActivation(
-                    time_dim=16,
-                    activation=FourierPointwise(
-                        out_type,
-                        grid=grid,
-                    )
-                ),
-                out_activation=FourierPointwise(
-                    out_type,
-                    grid=grid,
-                ),
-            ),
-            block_repeats=2,
-            downsample_factory=partial(
-                FourierExtremePool3D,
-                grid=grid,
-                kernel_size=2,
-            ),
-            upsample_factory=partial(
-                R3Upsampling,
-                size_expr=lambda x: 2*x + 1,
-            ),
-            time_embedding=nn.Sequential(
-                SinusoidalEmbedding(
-                    out_dim=16,
-                    min_wavelength=0.1,
-                    max_wavelength=100,
-                ),
-                nn.Linear(16, 16),
-                nn.ReLU(),
-            ),
-    )
+    x1 = torch.zeros(2, 3, 4, 4, 4)
+    x2 = GeometricTensor(torch.zeros(2, 3, 4, 4, 4), ft)
+    t = torch.zeros(2)
 
-    x = GeometricTensor(torch.randn(2, 3, 15, 15, 15), unet.in_type)
-    t = torch.randn(2)
-    y = torch.randn(2, 3, 15, 15, 15)
+    m = ap.PopCatSkip([nn.Identity()])
 
-    assert_vars_change(
-            model=ModuleWrapper(unet),
-            loss_fn=nn.MSELoss(),
-            optim=torch.optim.Adam(unet.parameters()),
-            batch=(InputWrapper(x, t), y),
-            device='cpu',
-    )
+    y = m(x1, t, skips=[x2])
+
+    assert y.shape == (2, 6, 4, 4, 4)
+
+def test_pop_cat_skip_sym():
+    gspace = rot3dOnR3()
+    ft = FieldType(gspace, 3 * [gspace.trivial_repr])
+
+    x1 = GeometricTensor(torch.zeros(2, 3, 4, 4, 4), ft)
+    x2 = GeometricTensor(torch.zeros(2, 3, 4, 4, 4), ft)
+    t = torch.zeros(2)
+
+    m = ap.PopCatSkip([nn.Identity()])
+
+    y = m(x1, t, skips=[x2])
+
+    assert y.shape == (2, 6, 4, 4, 4)
 

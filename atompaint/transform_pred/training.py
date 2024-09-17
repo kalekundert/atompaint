@@ -36,9 +36,8 @@ from atompaint.encoders.resnet import (
 from atompaint.encoders.densenet import (
         DenseNet, make_fourier_growth_type,
 )
-from atompaint.encoders.layers import (
-        make_conv_layer, make_conv_fourier_layer, make_conv_gated_layer,
-        make_gated_nonlinearity,
+from atompaint.layers import (
+        conv_layer, conv_bn_fourier_layer, conv_bn_gated_layer, gated_layer,
 )
 from atompaint.field_types import (
         make_top_level_field_types, make_fourier_field_types,
@@ -268,7 +267,7 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
                     channels=resnet_inner_channels,
                     max_frequencies=max_frequency,
             )
-            initial_layer_factory = make_conv_layer
+            initial_layer_factory = conv_layer
             block_factory = partial(
                     make_escnn_example_block,
                     grid=grid_elements,
@@ -293,7 +292,7 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
                     max_frequencies=max_frequency,
             )
             initial_layer_factory = partial(
-                    make_conv_fourier_layer,
+                    conv_bn_fourier_layer,
                     ift_grid=grid_elements,
             )
             block_factory = partial(
@@ -323,7 +322,7 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
                     terms=polynomial_terms,
                     gated=True,
             )
-            initial_layer_factory = make_conv_gated_layer
+            initial_layer_factory = conv_bn_gated_layer
             block_factory = make_beta_block
 
         else:
@@ -331,7 +330,7 @@ class ResNetPredictor(PredictorModule, factory_key='resnet'):
 
         if final_conv:
             final_layer_factory = partial(
-                    make_conv_layer,
+                    conv_layer,
                     kernel_size=final_conv,
             )
         else:
@@ -416,7 +415,7 @@ class DenseNetPredictor(PredictorModule, factory_key='densenet'):
 
         if final_conv:
             final_layer_factory = partial(
-                    make_conv_layer,
+                    conv_layer,
                     kernel_size=final_conv,
             )
         else:
@@ -441,11 +440,11 @@ class DenseNetPredictor(PredictorModule, factory_key='densenet'):
                         unpack=True,
                     ),
                     initial_layer_factory=partial(
-                            make_conv_fourier_layer,
+                            conv_bn_fourier_layer,
                             ift_grid=grid_elements,
                     ),
                     final_layer_factory=final_layer_factory,
-                    nonlin1_factory=make_gated_nonlinearity,
+                    nonlin1_factory=gated_layer,
                     nonlin2_factory=partial(
                         FourierPointwise,
                         grid=grid_elements,

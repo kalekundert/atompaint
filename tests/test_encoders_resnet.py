@@ -1,8 +1,8 @@
 from atompaint.encoders.resnet import (
         ResNet, make_escnn_example_block, make_alpha_block, make_beta_block,
 )
-from atompaint.encoders.layers import (
-        make_conv_layer, make_conv_fourier_layer, make_conv_gated_layer,
+from atompaint.layers import (
+        conv_layer, conv_bn_fourier_layer, conv_bn_gated_layer
 )
 from atompaint.field_types import (
         make_top_level_field_types, make_fourier_field_types,
@@ -38,7 +38,7 @@ def test_escnn_example_resnet_equivariance():
                 channels=[2],
                 max_frequencies=L,
             ),
-            initial_layer_factory=make_conv_layer,
+            initial_layer_factory=conv_layer,
             block_factory=partial(
                 make_escnn_example_block,
                 grid=grid,
@@ -79,7 +79,7 @@ def test_alpha_resnet_equivariance():
                 max_frequencies=L,
             ),
             initial_layer_factory=partial(
-                make_conv_fourier_layer,
+                conv_bn_fourier_layer,
                 ift_grid=grid,
             ),
             block_factory=partial(
@@ -122,7 +122,7 @@ def test_beta_resnet_equivariance():
                     terms=3,
                     gated=True,
             ),
-            initial_layer_factory=make_conv_gated_layer,
+            initial_layer_factory=conv_bn_gated_layer,
             block_factory=make_beta_block,
             block_repeats=2,
             pool_factors=[2],

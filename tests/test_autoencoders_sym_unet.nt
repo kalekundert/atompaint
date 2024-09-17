@@ -1,0 +1,10 @@
+test_sym_unet_block_equivariance:
+  -
+    size_algorithm: padded-conv
+  -
+    size_algorithm: upsample
+  -
+    size_algorithm: transposed-conv
+  -
+    in_channels: 1
+    out_channels: 2
