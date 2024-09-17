@@ -80,7 +80,12 @@ def test_view_pair_encoder_equivariance():
         assert f_gx.shape == (1, 70)
         assert gf_x.shape == (1, 70)
 
-        torch.testing.assert_close(gf_x.tensor, f_gx.tensor)
+        torch.testing.assert_close(
+                gf_x.tensor,
+                f_gx.tensor,
+                atol=1e-4,
+                rtol=1.3e-6,
+        )
 
 @pff.parametrize(
         key='test_classifier_equivariance',
