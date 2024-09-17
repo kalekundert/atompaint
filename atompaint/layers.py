@@ -7,7 +7,7 @@ from atompaint.pooling import FourierExtremePool3D, FourierAvgPool3D
 from atompaint.type_hints import Grid
 from escnn.nn import (
         FieldType, FourierFieldType, GeometricTensor,
-        R3Conv, IIDBatchNorm3d,
+        R3Conv, Linear, IIDBatchNorm3d, IIDBatchNorm1d,
         FourierPointwise, GatedNonLinearity1, NormNonLinearity,
         PointwiseAvgPoolAntialiased3D,
 )
@@ -121,6 +121,24 @@ def conv_bn_fourier_layer(
     )
     yield IIDBatchNorm3d(out_type)
     yield FourierPointwise(out_type, ift_grid, function=function)
+
+def linear_fourier_layer(
+        in_type: FieldType,
+        out_type: FourierFieldType,
+        ift_grid: Grid,
+        *,
+        nonlinearity: str = 'p_relu',
+):
+    yield Linear(in_type, out_type, bias=False)
+    yield IIDBatchNorm1d(out_type)
+    yield FourierPointwise(
+            out_type,
+            ift_grid,
+            function=nonlinearity
+    )
+    # If I were going to use drop-out, it'd come after the nonlinearity.  But 
+    # I've seen some comments saying the batch norm and dropout don't work well 
+    # together.
 
 def gated_layer(out_type, *, function=F.sigmoid):
     in_type = add_gates(out_type)

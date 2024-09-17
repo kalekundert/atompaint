@@ -1,21 +1,22 @@
-import atompaint.transform_pred.models as ap
 import torch
-import pytest
 import parametrize_from_file as pff
 
-from atompaint.transform_pred.models import (
-        ViewPairEncoder, ViewPairClassifier,
-        make_fourier_classifier_field_types, make_linear_fourier_layer,
+from atompaint.classifiers.neighbor_loc import (
+        SymViewPairEncoder, SymViewPairClassifier, 
+        make_neighbor_loc_model, make_fourier_mlp_field_types
+
 )
 from atompaint.encoders.cnn import FourierCnn
+from atompaint.layers import linear_fourier_layer
 from atompaint.vendored.escnn_nn_testing import get_exact_3d_rotations
-from escnn.nn import FieldType, FourierFieldType, GeometricTensor
+from escnn.nn import FourierFieldType, GeometricTensor
 from escnn.gspaces import no_base_space
-from escnn.group import SO3, so3_group
-from scipy.spatial.transform import Rotation
-from math import radians
+from escnn.group import so3_group
 from functools import partial
 from utils import *
+
+with_py = pff.Namespace()
+with_ap = pff.Namespace('from atompaint.classifiers.neighbor_loc import *')
 
 def classifier_equivariance(*, require_grids=None):
 
@@ -35,7 +36,6 @@ def classifier_equivariance(*, require_grids=None):
         return params
 
     def load(grid_name, origins_str, g_rot_vec_str, g_permut_str):
-        origins = coords(origins_str)
         g_rot_vec = vector(g_rot_vec_str)
         g_permut = integers(g_permut_str)
 
@@ -56,7 +56,7 @@ def test_view_pair_encoder_equivariance():
             conv_padding=0,
             frequencies=2,
     )
-    encoder = ViewPairEncoder(cnn)
+    encoder = SymViewPairEncoder(cnn)
 
     in_type = encoder.in_type
     so3 = in_type.fibergroup
@@ -101,14 +101,14 @@ def test_view_pair_classifier_equivariance(inputs):
             channels=2,
             bl_irreps=so3.bl_irreps(max_freq),
     )
-    mlp = ViewPairClassifier(
-            layer_types=make_fourier_classifier_field_types(
+    mlp = SymViewPairClassifier(
+            layer_types=make_fourier_mlp_field_types(
                 in_type=in_type,
                 channels=1,
                 max_frequencies=max_freq,
             ),
             layer_factory=partial(
-                make_linear_fourier_layer,
+                linear_fourier_layer,
                 ift_grid=so3.grid('thomson_cube', 4),
             ),
             logits_max_freq=max_freq,
@@ -123,5 +123,51 @@ def test_view_pair_classifier_equivariance(inputs):
 
     gx = x.transform(g)
     f_gx = mlp.forward(gx)
+
+    torch.testing.assert_close(gf_x, f_gx)
+
+@pff.parametrize(
+        schema=pff.cast(
+            model=with_py.eval,
+            in_shape=with_py.eval,
+            out_shape=with_py.eval,
+        ),
+)
+@pff.parametrize(
+        key='test_classifier_equivariance',
+
+        # We currently have the "cube" grid hard-coded into the predictors, so 
+        # we can only handle test cases with this exact grid.
+        schema=[
+            classifier_equivariance(require_grids=['cube']),
+        ],
+)
+def test_model_equivariance(model, in_shape, out_shape, inputs):
+    model = make_neighbor_loc_model(**model)
+    _, _, _, g, g_permut = inputs()
+
+    b, v, *img_shape = in_shape
+
+    # If there's only one training example, the batch normalization will be 
+    # unable to calculate variances.
+    assert b > 1
+    assert v == 2
+
+    # The input has an extra "view" dimension that it's incompatible with the 
+    # transformation functions provided by escnn.  We work around this by 
+    # putting the views in the batch dimension and reshaping after the 
+    # transformation.
+    x0 = torch.randn(b * v, *img_shape)
+    x = x0.reshape(*in_shape)
+
+    f_x = model(x)
+    gf_x = f_x[:, g_permut]
+
+    assert f_x.shape == out_shape
+
+    gx = model.in_type.transform(x0, g).reshape(*x.shape)
+    f_gx = model(gx)
+
+    assert f_gx.shape == out_shape
 
     torch.testing.assert_close(gf_x, f_gx)

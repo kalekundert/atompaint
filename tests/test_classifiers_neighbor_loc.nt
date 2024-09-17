@@ -1,4 +1,42 @@
-test_predictor_equivariance:
+test_classifier_equivariance:
+  -
+    id: cube-x
+    grid: cube
+    origins:
+      >  0 -1  0
+      >  0  1  0
+      > -1  0  0
+      >  1  0  0
+      >  0  0  1
+      >  0  0 -1
+    g_rot_vec: pi/2 0 0
+    g_permut: 4 5 2 3 1 0
+  -
+    id: cube-y
+    grid: cube
+    origins:
+      >  0 -1  0
+      >  0  1  0
+      > -1  0  0
+      >  1  0  0
+      >  0  0  1
+      >  0  0 -1
+    g_rot_vec: 0 pi/2 0
+    g_permut: 0 1 5 4 2 3
+  -
+    id: cube-z
+    grid: cube
+    origins:
+      >  0 -1  0
+      >  0  1  0
+      > -1  0  0
+      >  1  0  0
+      >  0  0  1
+      >  0  0 -1
+    g_rot_vec: 0 0 pi/2
+    g_permut: 2 3 1 0 4 5
+
+test_model_equivariance:
   -
     id: cnn
     model:
