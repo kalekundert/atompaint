@@ -26,7 +26,7 @@ from itertools import pairwise
 from functools import partial
 
 from typing import Iterable, Optional
-from atompaint.type_hints import LayerFactory
+from torchyield import Layer, LayerFactory
 
 class ClassificationTask(EvalModeCheckpointMixin, pl.LightningModule):
 
@@ -271,23 +271,16 @@ class AsymViewPairClassifier(Module):
     perform better than a fully non-equivariant model.
     """
 
-    def __init__(
-            self, *,
-            channels: list[int],
-            layer_factory: LayerFactory,
-    ):
+    def __init__(self, classifier: Layer):
         super().__init__()
-        self.mlp = ty.mlp_layer(
-                layer_factory,
-                **channels(channels),
-        )
+        self.classifier = ty.module_from_layers(classifier)
 
     def forward(self, x: torch.Tensor | GeometricTensor) -> torch.Tensor:
         if isinstance(x, GeometricTensor):
             x = x.tensor 
 
         assert x.dim() == 2
-        return self.mlp(x)
+        return self.classifier(x)
 
 # Below are a number of functions for instantiating models from simpler sets of 
 # arguments.  These functions are mostly historical artifacts, although I 
@@ -375,9 +368,9 @@ def make_cnn(
     else:
         assert mlp_channels[-1] == 6
         classifier = AsymViewPairClassifier(
-                channels=mlp_channels,
-                layer_factory=partial(
+                ty.mlp_layer(
                     ty.linear_relu_dropout_layer,
+                    **ty.channels(mlp_channels),
                     dropout_p=0.2,
                 ),
         )
@@ -410,9 +403,9 @@ def make_asym_cnn(
             ),
     )
     classifier = AsymViewPairClassifier(
-            channels=mlp_channels,
-            layer_factory=partial(
+            ty.mlp_layer(
                 ty.linear_relu_dropout_layer,
+                **ty.channels(mlp_channels),
                 dropout_p=0.2,
             ),
     )
@@ -564,9 +557,9 @@ def make_resnet(
     else:
         assert mlp_channels[-1] == 6
         classifier = AsymViewPairClassifier(
-                channels=mlp_channels,
-                layer_factory=partial(
+                ty.mlp_layer(
                     ty.linear_relu_dropout_layer,
+                    **ty.channels(mlp_channels),
                     dropout_p=0.2,
                 ),
         )
@@ -678,9 +671,9 @@ def make_densenet(
     else:
         assert mlp_channels[-1] == 6
         classifier = AsymViewPairClassifier(
-                channels=mlp_channels,
-                layer_factory=partial(
-                    ty.linear_relu_dropout,
+                ty.mlp_layer(
+                    ty.linear_relu_dropout_layer,
+                    **ty.channels(mlp_channels),
                     dropout_p=0.2,
                 ),
         )
@@ -739,6 +732,19 @@ def make_fourier_mlp_field_types(
     )
 
 def _flatten_base_space(geom_tensor):
+    """
+    Remove the spatial dimensions from the given geometric tensor.
+
+    All of the spatial dimensions in the input must be of size 1, so they can 
+    be removed without losing information or changing the size of any other 
+    dimension.  If this condition is not met, an assertion error will be 
+    raised.
+
+    The return value is still a geometric tensor, but with a 0D base space (see 
+    `no_base_space()`) instead of whatever the original base space was.  The 
+    fiber representations are unchanged.
+    """
+
     # TODO: I'd like to contribute this as a method of the `GeometricTensor` 
     # class.
     tensor = geom_tensor.tensor

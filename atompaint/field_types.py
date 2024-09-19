@@ -49,6 +49,10 @@ def make_top_level_field_types(gspace, channels, make_nontrivial_field_types):
 def make_trivial_field_type(gspace, channels):
     yield FieldType(gspace, channels * [gspace.trivial_repr])
 
+def make_trivial_field_types(gspace, channels):
+    for channels_i in channels:
+        yield FieldType(gspace, channels_i * [gspace.trivial_repr])
+
 def make_fourier_field_types(gspace, channels, max_frequencies, **kwargs):
     group = gspace.fibergroup
 

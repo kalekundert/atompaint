@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from atompaint.field_types import add_gates
 from atompaint.pooling import FourierExtremePool3D, FourierAvgPool3D
+from atompaint.upsampling import R3Upsampling
 from atompaint.type_hints import Grid
 from escnn.nn import (
         FieldType, FourierFieldType, GeometricTensor,
@@ -50,7 +51,7 @@ def conv_layer(
     yield R3Conv(
             in_type,
             out_type,
-            kernel_size=3,
+            kernel_size=kernel_size,
             stride=stride,
             padding=padding,
     )
@@ -167,8 +168,24 @@ def pool_fourier_avg_layer(in_type, ift_grid):
             stride=2,
     )
 
-def pool_fourier_extreme_layer(in_type, ift_grid):
+def pool_fourier_extreme_layer(in_type, ift_grid, *, check_input_shape=True):
     return FourierExtremePool3D(
+            in_type,
+            grid=ift_grid,
+            kernel_size=2,
+            check_input_shape=check_input_shape,
+    )
+
+def up_pool_fourier_extreme_layer(in_type, ift_grid):
+    # To avoid edge effects, convolution layers need odd-sized inputs and 
+    # Fourier pooling layers need even-sized ones.  One way to accommodate both 
+    # is to upsample the input by one before pooling.
+    yield R3Upsampling(
+            in_type,
+            size_expr=lambda x: x+1,
+            align_corners=True,
+    )
+    yield FourierExtremePool3D(
             in_type,
             grid=ift_grid,
             kernel_size=2,
