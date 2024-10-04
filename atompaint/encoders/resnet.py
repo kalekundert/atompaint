@@ -1,30 +1,29 @@
 from __future__ import annotations
 
+import torchyield as ty
+
 from atompaint.pooling import FourierExtremePool3D
-from atompaint.field_types import CastToFourierFieldType, add_gates
-from atompaint.nonlinearities import leaky_hard_shrink
+from atompaint.layers import conv_bn_fourier_layer, pool_conv_layer
+from atompaint.field_types import (
+        CastToFourierFieldType, add_gates,
+        make_trivial_field_types, make_fourier_field_types,
+)
+from atompaint.nonlinearities import leaky_hard_shrink, first_hermite
 from atompaint.utils import identity
+from escnn.gspaces import rot3dOnR3
 from escnn.nn import (
         FieldType, GeometricTensor,
-        R3Conv, FourierPointwise, FourierELU, GatedNonLinearity1,
-        IIDBatchNorm3d, PointwiseAvgPoolAntialiased3D, SequentialModule,
-        IdentityModule,
+        R3Conv, IIDBatchNorm3d, PointwiseAvgPoolAntialiased3D, 
+        FourierPointwise, FourierELU, GatedNonLinearity1, TensorProductModule,
+        SequentialModule, IdentityModule,
 )
 from torch.nn import Module, Sequential
 from more_itertools import pairwise, zip_broadcast, all_equal
+from itertools import chain
+from functools import partial
 
 from typing import Optional, Callable
 from atompaint.type_hints import LayerFactory, ConvFactory, Grid
-
-# Hyperparameters of interest:
-#
-# [ ] First vs second nonlinearity
-# [ ] Downsampling:
-#     - Skip connection: Pool vs stride
-#     - Backbone: Fourier ReLU+pool, vs separate nonlinearity/downsample.
-# [ ] Bottleneck
-# [ ] Network depth:
-#     - Blocks, block repeats, pooling factors, etc.
 
 def conv3x3x3(in_type, out_type, stride=1, padding=1):
     return R3Conv(
@@ -185,6 +184,96 @@ class ResBlock(Module):
 
         return y
 
+def load_expt_72_resnet(*, device=None):
+    from atompaint.checkpoints import load_model_weights
+
+    classifier = make_expt_72_resnet()
+    load_model_weights(
+            model=classifier,
+            path='expt_72/padding=2-6A;angle=40deg;image-size=24A;job-id=40481465;epoch=49.ckpt',
+            prefix='model.encoder.encoder.',
+            xxh32sum='e4b0330d',
+            device=device,
+    )
+    return classifier
+
+def make_expt_72_resnet():
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    ift_grid = so3.grid('thomson_cube', N=96//24)
+
+    return ResNet(
+            outer_types = chain(
+                make_trivial_field_types(
+                    gspace=gspace, 
+                    channels=[7],
+                ),
+                make_fourier_field_types(
+                    gspace=gspace,
+                    channels=[2, 4, 7, 14, 28],
+                    max_frequencies=2,
+                ),
+            ),
+            inner_types = make_fourier_field_types(
+                    gspace=gspace, 
+                    channels=[2, 5, 5, 10],
+                    max_frequencies=2,
+            ),
+            initial_layer_factory = partial(
+                    conv_bn_fourier_layer,
+                    ift_grid=ift_grid,
+            ),
+            block_factory=partial(
+                    make_alpha_block,
+                    grid=ift_grid,
+            ),
+            block_repeats=1,
+            pool_factors=[2, 2, 2, 2],
+    )
+
+def make_expt_94_resnet():
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    ift_grid = so3.grid('thomson_cube', N=96//24)
+
+    outer_channels = [2, 3, 5, 7, 11, 16]
+    inner_channels = outer_channels[1:-1]
+
+    return ResNet(
+            outer_types=chain(
+                make_trivial_field_types(
+                    gspace=gspace, 
+                    channels=[6],
+                ),
+                make_fourier_field_types(
+                    gspace=gspace,
+                    channels=outer_channels,
+                    max_frequencies=2,
+                ),
+            ),
+            inner_types=make_fourier_field_types(
+                gspace=gspace, 
+                channels=inner_channels,
+                max_frequencies=2,
+            ),
+            initial_layer_factory=partial(
+                conv_bn_fourier_layer,
+                ift_grid=ift_grid,
+            ),
+            final_layer_factory=partial(
+                conv_bn_fourier_layer,
+                kernel_size=4,
+                ift_grid=ift_grid,
+            ),
+            block_factory=partial(
+                make_gamma_block,
+                ift_grid=ift_grid,
+            ),
+            block_repeats=1,
+            pool_factors=[1, 2, 1, 2],
+    )
+
+
 def make_escnn_example_block(
         i: int,
         j: int,
@@ -232,6 +321,7 @@ def make_alpha_block(
                 in_type,
                 grid=grid,
                 kernel_size=pool_factor,
+                check_input_shape=False,
         )
 
     return ResBlock(
@@ -288,6 +378,39 @@ def make_beta_block(
             out_nonlinearity=GatedNonLinearity1(out_type, drop_gates=False),
             pool=pool,
             #skip_factory=skip_concat,
+    )
+
+def make_gamma_block(
+        i: int,
+        j: int,
+        in_type: FieldType,
+        mid_type: FieldType,
+        out_type: FieldType,
+        pool_factor: int,
+        ift_grid: Grid,
+):
+    # This block comes from Experiment #91, where I found that the combination 
+    # of tensor product and first Hermite Fourier activations worked 
+    # particularly well.
+
+    if pool_factor == 1:
+        pool = []
+    elif pool_factor == 2:
+        pool = pool_conv_layer(in_type)
+    else:
+        raise ValueError("`pool_factor` must be 1 or 2, not {pool_factor!r}")
+
+    return ResBlock(
+            in_type,
+            out_type,
+            mid_nonlinearity=TensorProductModule(mid_type, mid_type),
+            out_nonlinearity=FourierPointwise(
+                in_type=out_type,
+                grid=ift_grid,
+                function=first_hermite,
+            ),
+            pool=ty.module_from_layers(pool),
+            pool_before_conv=True,
     )
 
 

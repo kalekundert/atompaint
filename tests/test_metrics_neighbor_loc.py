@@ -1,6 +1,7 @@
 import torch
 import atompaint.metrics.neighbor_loc as _ap
 import numpy as np
+import pytest
 
 from more_itertools import all_equal
 from utils import IMAGE_DIR
@@ -17,7 +18,10 @@ def test_neighbor_loc_accuracy():
     imgs = torch.from_numpy(img).tile((12, 1, 1, 1, 1))
     noise = torch.randn(*imgs.shape)
 
-    metric = _ap.NeighborLocAccuracy()
+    try:
+        metric = _ap.NeighborLocAccuracy()
+    except KeyError:
+        pytest.skip()
 
     acc_imgs = metric(imgs)
     acc_noise = metric(noise)
@@ -115,4 +119,85 @@ def test_iter_view_pair_indices():
         np.testing.assert_equal(hits_i, np.ones((2, 2, 2)))
 
     assert all_equal(hits.flat)
+
+@pytest.mark.parametrize('n', [
+    # Smallest possible input; should highlight errors related to DOFs.
+    2,
+
+    # Small number of batches and partial batches
+    16, 24, 32,
+
+    # Large inputs; 2²⁰=1M samples is enough to induce errors on the order of 
+    # 0.1 in `torch.cov()` when comparing 32- and 64-bit floats.  Typically the 
+    # FID metric is evaluated using 50K images, which is not as strenuous as 
+    # this, but still potentially dangerous.
+    2**10, 2**20,
+])
+def test_merge_batch_stats_in_place(n):
+    rng = np.random.default_rng(0)
+    d, Z = 3, 10
+
+    # Take care to create a synthetic dataset with a non-trivial covariance 
+    # matrix.  There are probably lots of ways to do this, but the approach 
+    # taken here is to draw samples from a multivariate normal distribution.  
+    # This distribution requires a positive semi-definite covariance matrix.  
+    # We can create a positive semi-definite matrix by multiplying a random 
+    # matrix by its own transpose.
+    #
+    # Note that, according to [Schubert2018], sorted datasets tend to 
+    # exacerbate loss-of-precision issues.  But since I don't imagine my FID 
+    # algorithm being used on sorted datasets, I'm not going to bother testing  
+    # that case.
+    #
+    # [Schubert2018] https://dl.acm.org/doi/10.1145/3221269.3223036
+
+    latent_mean = rng.uniform(-Z, Z, size=d)
+    latent_cov = (A := rng.uniform(-Z, Z, size=(d, d))) @ A.T
+
+    assert is_pos_def(latent_cov)
+
+    x = rng.multivariate_normal(latent_mean, latent_cov, size=n)
+
+    # Compare to the numpy implementation, which I've found to be more accurate 
+    # than the native torch functions in some cases.
+
+    mean_np = np.mean(x, 0)
+    cov_np = np.cov(x.T)
+
+    # Use single-precision floats in this test.  This allows treating the 
+    # double-precision values calculated by numpy as "the truth".  Plus, since 
+    # the tests pass, it's probably fine to use single-precision even for real 
+    # applications.
+
+    x = torch.from_numpy(x).float()
+
+    mean_accum = torch.zeros(d)
+    mean_accum_err = torch.zeros(d)
+    ncov_accum = torch.zeros(d, d)
+    ncov_accum_err = torch.zeros(d, d)
+    n_accum = torch.tensor(0, dtype=int)
+    accum_stats = mean_accum, mean_accum_err, ncov_accum, ncov_accum_err, n_accum
+
+    for xi in x.split(16):
+        batch_stats = _ap._calc_batch_stats(xi)
+        _ap._merge_batch_stats_in_place(*accum_stats, *batch_stats)
+
+    torch.testing.assert_close(
+            mean_accum,
+            torch.from_numpy(mean_np).float(),
+    )
+    torch.testing.assert_close(
+            _ap._calc_cov(ncov_accum, n_accum),
+            torch.from_numpy(cov_np).float(),
+    )
+
+def is_pos_def(A):
+    if np.array_equal(A, A.T):
+        try:
+            np.linalg.cholesky(A)
+            return True
+        except np.linalg.LinAlgError:
+            return False
+    else:
+        return False
 

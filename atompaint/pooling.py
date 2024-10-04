@@ -51,7 +51,7 @@ class FourierExtremePool3D(torch.nn.Module):
             normalize: bool = True,
             extra_irreps: List = [],
             check_input_shape: bool = True,
-            ):
+    ):
         """
         Arguments:
             check_input_shape:
