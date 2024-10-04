@@ -3,8 +3,11 @@ import macromol_dataframe as mmdf
 import numpy as np
 
 from escnn.group import octa_group
+from pathlib import Path
 from io import StringIO
 
+TEST_DIR = Path(__file__).parent
+IMAGE_DIR = TEST_DIR / 'images'
 
 with_py = pff.Namespace()
 with_math = pff.Namespace('from math import *')

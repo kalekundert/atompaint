@@ -1,6 +1,3 @@
-# KBK: I think this functionality should be moved into ESCNN itself, but for 
-# now I'm too lazy to put together a PR.
-
 class EvalModeCheckpointMixin:
     """
     Put the model into "evaluation mode" before saving or loading the state 
@@ -9,6 +6,9 @@ class EvalModeCheckpointMixin:
     .. _convolutional: https://quva-lab.github.io/escnn/api/escnn.nn.html#rdconv
     .. _linear: https://quva-lab.github.io/escnn/api/escnn.nn.html#escnn.nn.Linear
     """
+
+    # KBK: I think this functionality should be moved into ESCNN itself, but 
+    # for now I'm too lazy to put together a PR.
 
     def state_dict(self, **kwargs):
         is_training = self.training
@@ -33,3 +33,12 @@ class EvalModeCheckpointMixin:
 
         if is_training:
             self.train()
+
+
+def extract_state_dict(state_dict, prefix):
+    i = len(prefix)
+    return {
+            k[i:]: v
+            for k, v in state_dict.items()
+            if k.startswith(prefix)
+    }

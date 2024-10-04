@@ -2,6 +2,7 @@ import lightning.pytorch as pl
 import torch.nn.functional as F
 import torchyield as ty
 import torch
+import importlib
 
 from atompaint.checkpoints import EvalModeCheckpointMixin
 from atompaint.field_types import (
@@ -281,6 +282,118 @@ class AsymViewPairClassifier(Module):
 
         assert x.dim() == 2
         return self.classifier(x)
+
+def load_default_15A_model(*, device=None):
+    from atompaint.checkpoints import extract_state_dict
+
+    ckpt_fp = (
+            importlib.resources.files()
+            .joinpath('weights')
+            .joinpath('neighbor_loc_15A.ckpt')
+            .open('rb')
+    )
+    ckpt = torch.load(ckpt_fp, map_location=device)
+
+    weights = extract_state_dict(ckpt['state_dict'], 'model.')
+
+    classifier = make_default_15A_model()
+    classifier.eval()
+    classifier.requires_grad_(False)
+    classifier.load_state_dict(weights)
+
+    return classifier
+
+def make_default_15A_model():
+    import torchyield as ty
+
+    from atompaint.encoders.resnet import ResNet, ResBlock
+    from atompaint.nonlinearities import leaky_hard_shrink
+    from atompaint.field_types import CastToFourierFieldType, make_trivial_field_types, make_fourier_field_types, add_gates
+    from atompaint.layers import conv_bn_fourier_layer, pool_conv_layer
+    from escnn.nn import FieldType, SequentialModule, FourierPointwise, GatedNonLinearity1
+    from escnn.gspaces import rot3dOnR3
+    from functools import partial
+    from itertools import chain
+
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    ift_grid = so3.grid('thomson_cube', N=96//24)
+
+    def block_factory(
+            i: int,
+            j: int,
+            in_type: FieldType,
+            mid_type: FieldType,
+            out_type: FieldType,
+            pool_factor: int,
+    ):
+        if pool_factor == 1:
+            pool = []
+        elif pool_factor == 2:
+            pool = pool_conv_layer(in_type)
+        else:
+            raise ValueError(f"`pool_factor` must be 1 or 2, not {pool_factor}")
+
+        return ResBlock(
+                in_type,
+                out_type,
+                mid_nonlinearity=SequentialModule(
+                    f := GatedNonLinearity1(add_gates(mid_type)),
+                    CastToFourierFieldType(f.out_type, mid_type),
+                ),
+                out_nonlinearity=FourierPointwise(
+                    in_type=out_type,
+                    grid=ift_grid,
+                    function=leaky_hard_shrink,
+                ),
+                pool=ty.module_from_layers(pool),
+                pool_before_conv=True,
+        )
+
+    pool_factors = [1, 2, 1, 2]
+    outer_channels = [2, 2, 11, 11, 24, 32]
+    inner_channels = outer_channels[1:-1]
+    final_size = 4
+
+    resnet = ResNet(
+            outer_types=chain(
+                make_trivial_field_types(
+                    gspace=gspace, 
+                    channels=[6],
+                ),
+                make_fourier_field_types(
+                    gspace=gspace,
+                    channels=outer_channels,
+                    max_frequencies=2,
+                ),
+            ),
+            inner_types=make_fourier_field_types(
+                gspace=gspace, 
+                channels=inner_channels,
+                max_frequencies=2,
+            ),
+            initial_layer_factory=partial(
+                conv_bn_fourier_layer,
+                ift_grid=ift_grid,
+            ),
+            final_layer_factory=partial(
+                conv_bn_fourier_layer,
+                kernel_size=final_size,
+                ift_grid=ift_grid,
+            ),
+            block_factory=block_factory,
+            block_repeats=1,
+            pool_factors=pool_factors,
+    )
+    mlp = ty.mlp_layer(
+            ty.linear_relu_dropout_layer,
+            **ty.channels([2240, 1024, 6]),
+            dropout_p=0.2,
+    )
+    return NeighborLoc(
+            encoder=SymViewPairEncoder(resnet),
+            classifier=AsymViewPairClassifier(mlp),
+    )
 
 # Below are a number of functions for instantiating models from simpler sets of 
 # arguments.  These functions are mostly historical artifacts, although I 
