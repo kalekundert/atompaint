@@ -19,6 +19,7 @@ dependencies = [
   'escnn @ git+https://github.com/kalekundert/escnn@507a2590876e3f4d3c5d11e448852c413eef65b0',
   'lightning',
   'macromol_gym_unsupervised',
+  'macromol_gym_pretrain',
   'macromol_voxelize',
   'more_itertools',
   'nestedtext',
