@@ -200,11 +200,14 @@ def _extract_view_pairs(
         for j, (view_ai, view_ba) in enumerate(_iter_view_pair_indices(i)):
             ij = i * 4 + j
 
+            slice_0 = slice(None),
             slices_a = _get_slices(view_ai, view_params)
             slices_b = _get_slices(view_ba + view_ai, view_params)
 
-            x[ij,0] = imgs[i][:, *slices_a]
-            x[ij,1] = imgs[i][:, *slices_b]
+            # The `imgs[i][:, *slices_a]` syntax doesn't work in python 3.10, 
+            # so instead we have to call `__getitem__()` manually.
+            x[ij,0] = imgs[i].__getitem__(slice_0 + slices_a)
+            x[ij,1] = imgs[i].__getitem__(slice_0 + slices_b)
             y[ij] = y_map[tuple(view_ba)]
 
     return x, y
@@ -265,7 +268,7 @@ def _get_slices(bool_vec, view_params):
     L = view_params.length_voxels
     pad = view_params.padding_voxels
     slice_map = slice(0, L), slice(L + pad, 2*L + pad)
-    return [slice_map[x] for x in bool_vec]
+    return tuple(slice_map[x] for x in bool_vec)
 
 
 def _calc_cov(ncov, n):
