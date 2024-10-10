@@ -1,3 +1,5 @@
+import torch
+
 from typing import TypeAlias
 from collections.abc import Iterable, Callable, Sequence
 
@@ -22,5 +24,9 @@ PoolFactory: TypeAlias = Callable[
 LayerFactory: TypeAlias = Callable[
         [FieldType, FieldType],
         Iterable[Module],
+]
+OptFactory: TypeAlias = Callable[
+        [Iterable[torch.nn.Parameter]],
+        torch.optim.Optimizer,
 ]
 

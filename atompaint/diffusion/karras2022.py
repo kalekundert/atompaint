@@ -1,11 +1,22 @@
+from __future__ import annotations
+
 import lightning as L
 import torch
 import torch.nn as nn
+import numpy as np
 
+from atompaint.metrics.neighbor_loc import (
+        NeighborLocAccuracy, FrechetNeighborLocDistance,
+)
 from einops import reduce
 from dataclasses import dataclass
 from itertools import pairwise
+from pathlib import Path
+from tqdm import trange
 from math import sqrt
+
+from typing import Optional
+from atompaint.type_hints import OptFactory
 
 # TODO:
 # - Save exponential moving averages of model weights [1].  This is apparently 
@@ -19,11 +30,29 @@ class KarrasDiffusion(L.LightningModule):
     frameworks described in [Karras2022]_ and [Karras2023]_.
     """
 
-    def __init__(self, model, *, opt_factory):
+    def __init__(
+            self,
+            model: KarrasPrecond,
+            *,
+            opt_factory: OptFactory,
+            gen_params: Optional[GenerateParams] = None,
+            frechet_ref_path: str | Path,
+    ):
         super().__init__()
 
         self.model = model
         self.optimizer = opt_factory(model.parameters())
+
+        # The neighbor-location-based metrics require batch sizes that are 
+        # multiples of 12.
+        self.gen_params = gen_params or GenerateParams()
+        self.gen_params.batch_size = 12
+
+        self.gen_metrics = {
+                'accuracy': NeighborLocAccuracy(),
+                'frechet_dist': FrechetNeighborLocDistance(),
+        }
+        self.gen_metrics['frechet_dist'].load_reference_stats(frechet_ref_path)
 
         # [Karras2022], Table 1
         self.P_mean = -1.2
@@ -77,6 +106,31 @@ class KarrasDiffusion(L.LightningModule):
         self.log('val/loss', loss, on_epoch=True)
         return loss
 
+    def on_validation_epoch_end(self):
+        # Lightning takes care of putting the model in eval-mode and disabling 
+        # gradients before this hook is invoked [1], so we don't need to do 
+        # that ourselves.
+        #
+        # [1]: https://pytorch-lightning.readthedocs.io/en/1.7.2/common/lightning_module.html#hooks
+
+        # We set the batch size to 12 in the constructor, so we're generating 
+        # 12 × 32 = 384 images.  Each image allows 4 updates, for a total of 
+        # 384 × 4 = 1536 updates.  In Experiment 97, I showed that this is 
+        # about the smallest number needed to get a stable result.
+
+        rng = np.random.default_rng(0)
+
+        for i in trange(32, desc="Generative metrics"):
+            x = generate(rng, self.model, self.gen_params)
+
+            for metric in self.gen_metrics.values():
+                metric.to(x.device)
+                metric.update(x)
+
+        for name, metric in self.gen_metrics.items():
+            self.log(f'gen/{name}', metric.compute())
+            metric.reset()
+
     def test_step(self, x):
         loss = self.forward(x)
         self.log('test/loss', loss, on_epoch=True)
@@ -112,7 +166,7 @@ class KarrasPrecond(nn.Module):
         purpose is to avoid dramatically scaling the model outputs.  When 
         $x_\textrm{noisy}$ is dominated by noise, its easiest to predict the 
         noise directly.  When $x_\textrm{noisy}$ is nearly noise-free to begin 
-        with, it easiest to directly predict $x$.
+        with, it's easiest to directly predict $x$.
         """
         assert x_noisy.shape[1:] == self.x_shape
         sigma_data = self.sigma_data
@@ -148,6 +202,7 @@ def generate(
         params: GenerateParams,
         record_trajectory: bool = False,
 ):
+    assert not model.training
     device = next(model.parameters()).device
 
     # See Algorithm 2 from [Karras2022].

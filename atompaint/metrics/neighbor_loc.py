@@ -1,11 +1,11 @@
 import torch
+import torch.nn as nn
 import numpy as np
 
-from escnn.nn import GeometricTensor
 from torch import Tensor, float32, int64
+from torch.nn.parameter import is_lazy
 from torchmetrics import Metric
 from torchmetrics.classification import MulticlassAccuracy
-from einops import rearrange
 from macromol_dataframe import Coords
 from dataclasses import dataclass
 
@@ -25,9 +25,6 @@ class NeighborLocAccuracy(MulticlassAccuracy):
         )
 
     def update(self, x):
-        b, c, sx, sy, sz = x.shape
-        assert sx == sy == sz == 33
-
         x, y = _extract_view_pairs(x, self.view_params)
         y_hat = self.classifier(x)
 
@@ -38,7 +35,7 @@ class FrechetNeighborLocDistance(Metric):
     is_differentiable = False
     full_state_update = False
 
-    def __init__(self, *, encoder=None, dtype=float32):
+    def __init__(self, *, layer=-2, dtype=float32):
         """
         Arguments:
             dtype:
@@ -50,15 +47,26 @@ class FrechetNeighborLocDistance(Metric):
                 you want to be totally sure.  The corresponding increases in 
                 runtime and memory usage should be negligible.
         """
+        from atompaint.classifiers.neighbor_loc import load_expt_94_model
+        from macromol_gym_pretrain.geometry import cube_faces
+
         super().__init__()
 
-        if encoder:
-            self.encoder = encoder
-        else:
-            from atompaint.encoders.resnet import load_expt_72_resnet
-            self.encoder = load_expt_72_resnet()
+        self.model = load_expt_94_model()
+        self.view_params = ViewParams(
+                direction_candidates=cube_faces(),
+                length_voxels=15,
+                padding_voxels=3,
+        )
 
-        c = self.encoder.out_type.size
+        if layer == -2:
+            del self.model.classifier.classifier[1:]
+            c = 512
+        elif layer == -3:
+            del self.model.classifier.classifier[:]
+            c = 1120
+        else:
+            raise ValueError(f"layer must be -2 or -3, not {layer}")
 
         self.add_state(
                 name='mean',
@@ -81,19 +89,25 @@ class FrechetNeighborLocDistance(Metric):
                 default=torch.tensor(0, dtype=int64),
         )
 
-        self.reference_stats = None
+        self.register_buffer(
+                name='ref_mean',
+                tensor=nn.UninitializedBuffer(),
+                persistent=True,
+        )
+        self.register_buffer(
+                name='ref_ncov',
+                tensor=nn.UninitializedBuffer(),
+                persistent=True,
+        )
+        self.register_buffer(
+                name='ref_n',
+                tensor=nn.UninitializedBuffer(),
+                persistent=True,
+        )
 
     def update(self, x: Tensor):
-        # I'm assuming that the model accepts and returns a `GeometricTensor`.  
-        # I'd like to relax this requirement, but I'm not totally sure how...
-        x = GeometricTensor(x, self.encoder.in_type)
-        y = self.encoder(x).tensor.to(self.mean.dtype)
-
-        if y.ndim == 1:
-            y = rearrange(y, 'c -> 1 c')
-        if y.ndim > 2:
-            b, c = y.shape[:2]
-            y = y.reshape(b, c)
+        x, _ = _extract_view_pairs(x, self.view_params)
+        y = self.model(x).to(self.mean.dtype)
 
         assert y.ndim == 2
 
@@ -130,29 +144,27 @@ class FrechetNeighborLocDistance(Metric):
     def compute(self):
         from torchmetrics.image.fid import _compute_fid
 
-        if not self.reference_stats:
+        if is_lazy(self.ref_mean):
             raise ValueError("must load reference statistics to calculate Fréchet distance\n• Did you remember to call `load_reference_stats()`?")
 
-        ref = self.reference_stats
-
-        mean = self.mean
-        mean_ref = ref['mean']
-
         cov = _calc_cov(self.ncov, self.n)
-        cov_ref = _calc_cov(ref['ncov'], ref['n'])
+        ref_cov = _calc_cov(self.ref_ncov, self.ref_n)
 
-        return _compute_fid(mean, cov, mean_ref, cov_ref)
+        return _compute_fid(self.mean, cov, self.ref_mean, ref_cov)
 
     def load_reference_stats(self, ref_path):
-        self.reference_stats = torch.load(
+        ref_stats = torch.load(
                 ref_path,
                 map_location=self.mean.device,
         )
 
-        # Check that the loaded stats are compatible with the stats we're 
-        # collecting in this run.
-        assert self.reference_stats['mean'].dtype == self.mean.dtype
-        assert self.reference_stats['mean'].shape == self.mean.shape
+        def materialize(buffer, x):
+            buffer.materialize(shape=x.shape, device=x.device, dtype=x.dtype)
+            buffer.copy_(x)
+
+        materialize(self.ref_mean, ref_stats['mean'])
+        materialize(self.ref_ncov, ref_stats['ncov'])
+        materialize(self.ref_n, ref_stats['n'])
 
     def save_reference_stats(self, ref_path):
         ref_stats = dict(
@@ -183,7 +195,8 @@ def _extract_view_pairs(
     L = view_params.length_voxels
     b, c, w, h, d = imgs.shape
     assert b % 12 == 0
-    assert w == h == d == 2 * L + view_params.padding_voxels
+    assert w == h == d
+    assert w >= 2 * L + view_params.padding_voxels
 
     assert np.issubdtype(view_params.direction_candidates.dtype, np.integer)
     assert len(view_params.direction_candidates) == 6
