@@ -8,6 +8,7 @@ from atompaint.layers import conv_bn_fourier_layer
 from atompaint.field_types import make_fourier_field_types
 from atompaint.upsampling import R3Upsampling
 from atompaint.time_embedding import SinusoidalEmbedding, LinearTimeActivation
+from atompaint.utils import partial_grid
 from atompaint.vendored.escnn_nn_testing import (
         check_equivariance, get_exact_3d_rotations,
 )
@@ -87,7 +88,7 @@ def test_sym_unet(skip_algorithm):
             ),
             head_factory=head_factory,
             tail_factory=tail_factory,
-            block_factories=[block_factory] * 2,
+            block_factories=partial_grid(1, 2)(block_factory),
             latent_factory=latent_factory,
             downsample_factory=downsample_factory,
             upsample_factory=upsample_factory,

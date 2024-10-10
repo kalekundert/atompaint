@@ -10,6 +10,7 @@ from atompaint.layers import UnwrapTensor
 from atompaint.field_types import make_fourier_field_types
 from atompaint.upsampling import Upsample3d
 from atompaint.time_embedding import SinusoidalEmbedding, LinearTimeActivation
+from atompaint.utils import partial_grid, rows
 from escnn.nn import R3Conv, IIDBatchNorm3d, FourierPointwise, PointwiseAvgPoolAntialiased3D
 from escnn.gspaces import rot3dOnR3
 from torchtest import assert_vars_change
@@ -33,7 +34,7 @@ def test_semisym_unet(skip_algorithm):
                 padding=0,
         )
 
-    def encoder_factory(in_type, out_type, time_dim, depth):
+    def encoder_factory(in_type, out_type, time_dim):
         return SymUNetBlock(
                 in_type,
                 time_activation=LinearTimeActivation(
@@ -49,14 +50,14 @@ def test_semisym_unet(skip_algorithm):
                 ),
         )
 
-    def decoder_factory(in_channels, out_channels, time_dim, depth):
+    def decoder_factory(in_channels, out_channels, time_dim, attention):
         yield AsymConditionedConvBlock(
                 in_channels,
                 out_channels,
                 time_dim=time_dim,
         )
 
-        if depth >=2:
+        if attention:
             yield AsymAttentionBlock(
                     out_channels,
                     num_heads=2,
@@ -64,7 +65,7 @@ def test_semisym_unet(skip_algorithm):
             )
 
     def latent_factory(in_type, time_dim):
-        yield encoder_factory(in_type, in_type, time_dim, depth=0)
+        yield encoder_factory(in_type, in_type, time_dim)
         yield UnwrapTensor()
 
     def downsample_factory(in_type):
@@ -74,7 +75,7 @@ def test_semisym_unet(skip_algorithm):
                 stride=2,
         )
 
-    def upsample_factory():
+    def upsample_factory(channels):
         return Upsample3d(
                 size_expr=lambda x: 2*x - 1,
                 mode='trilinear',
@@ -96,8 +97,11 @@ def test_semisym_unet(skip_algorithm):
             head_factory=head_factory,
             tail_factory=tail_factory,
 
-            encoder_factories=[encoder_factory] * 2,
-            decoder_factories=[decoder_factory] * 2,
+            encoder_factories=partial_grid(cols=2)(encoder_factory),
+            decoder_factories=partial_grid(cols=2)(
+                decoder_factory,
+                attention=rows(False, True),
+            ),
             latent_factory=latent_factory,
 
             downsample_factory=downsample_factory,

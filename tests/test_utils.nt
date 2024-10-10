@@ -1,0 +1,69 @@
+test_require_nested_list:
+  -
+    id: scalar-1x1
+    x: 1
+    y: [[1]]
+  -
+    id: scalar-2x1
+    x: 1
+    rows: 2
+    y: [[1], [1]]
+  -
+    id: scalar-1x2
+    x: 1
+    cols: 2
+    y: [[1, 1]]
+  -
+    id: scalar-2x2
+    x: 1
+    rows: 2
+    cols: 2
+    y: [[1, 1], [1, 1]]
+  -
+    id: grid-1x1
+    x: [[1]]
+    y: [[1]]
+  -
+    id: grid-2x1
+    x: [[1], [2]]
+    y: [[1], [2]]
+  -
+    id: grid-2x1-broadcast
+    x: [[1]]
+    rows: 2
+    y: [[1], [1]]
+  -
+    id: grid-1x2
+    x: [[1, 2]]
+    y: [[1, 2]]
+  -
+    id: grid-2x2
+    x: [[1, 1], [1, 1]]
+    y: [[1, 1], [1, 1]]
+  -
+    id: grid-2x2-broadcast
+    x: [[1, 2]]
+    rows: 2
+    y: [[1, 2], [1, 2]]
+  -
+    id: err-wrong-num-rows
+    x: [[1], [2]]
+    rows: 3
+    error:
+      type: ValueError
+      message: expected 3 rows, but got 2
+  -
+    id: err-wrong-num-cols
+    x: [[1, 2]]
+    cols: 3
+    error:
+      type: ValueError
+      message: expected 3 columns, but got 2
+  -
+    id: err-list-of-lists
+    x: [1, 2]
+    cols: 3
+    error:
+      type: ValueError
+      message: expected list-of-lists, but got list-of: <class 'int'>
+

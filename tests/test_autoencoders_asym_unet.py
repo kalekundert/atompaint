@@ -5,6 +5,7 @@ import parametrize_from_file as pff
 import pytest
 
 from atompaint.time_embedding import SinusoidalEmbedding
+from atompaint.utils import partial_grid
 from torchtest import assert_vars_change
 from test_time_embedding import ModuleWrapper, InputWrapper
 
@@ -32,12 +33,11 @@ def test_asym_unet(skip_algorithm):
                 padding=0,
         )
 
-    def block_factory(in_channels, out_channels, time_dim, depth):
+    def block_factory(in_channels, out_channels, time_dim):
         yield from conv_attn_factory(
                 in_channels,
                 out_channels,
                 time_dim=time_dim,
-                attention=(depth >= 2),
         )
 
     def latent_factory(channels, time_dim):
@@ -62,11 +62,11 @@ def test_asym_unet(skip_algorithm):
                     channels_per_head=out_channels // 2,
             )
 
-    def downsample_factory():
-        return nn.MaxPool3d()
+    def downsample_factory(channels):
+        return nn.MaxPool3d(kernel_size=2)
 
-    def upsample_factory():
-        return nn.Upsample3d(scale_factor=2, mode='trilinear')
+    def upsample_factory(channels):
+        return nn.Upsample(scale_factor=2, mode='trilinear')
 
     def time_factory(time_dim):
         yield SinusoidalEmbedding(
@@ -78,10 +78,10 @@ def test_asym_unet(skip_algorithm):
         yield nn.ReLU()
 
     unet = ap.AsymUNet(
-            channels=[1, 2, 4],
+            channels=[1, 2, 3, 4],
             head_factory=head_factory,
             tail_factory=tail_factory,
-            block_factories=[block_factory] * 2,
+            block_factories=partial_grid(cols=2)(block_factory),
             latent_factory=latent_factory,
             downsample_factory=downsample_factory,
             upsample_factory=upsample_factory,

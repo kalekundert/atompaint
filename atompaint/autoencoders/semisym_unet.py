@@ -1,5 +1,6 @@
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.field_types import make_trivial_field_type
+from atompaint.utils import require_nested_list
 from torch import Tensor
 from escnn.nn import GeometricTensor
 from more_itertools import one, pairwise, mark_ends
@@ -17,8 +18,8 @@ class SemiSymUNet(UNet):
             encoder_types: Iterable[FieldType],
             head_factory: LayerFactory,
             tail_factory: LayerFactory,
-            encoder_factories: list[LayerFactory],
-            decoder_factories: list[LayerFactory],
+            encoder_factories: list[list[LayerFactory]],
+            decoder_factories: list[list[LayerFactory]],
             latent_factory: LayerFactory,
             downsample_factory: LayerFactory,
             upsample_factory: LayerFactory,
@@ -68,33 +69,37 @@ class SemiSymUNet(UNet):
                     ) -> nn.Module | Iterable[nn.Module]
 
             encoder_factories:
-                A list of functions that can be used to instantiate the 
-                equivariant "blocks" making up the U-Net encoder.  In each 
-                level of the U-Net, each of the blocks produces by the 
-                functions will be invoked in order.  The functions should have 
-                the following signature::
+                A list-of-lists-of-functions that can be used to instantiate 
+                the equivariant "blocks" making up the U-Net encoder.  Each 
+                entry in the outer list corresponds to a different input size.  
+                This size of this list must match the number of encoder 
+                type pairs, or be 1, in which case the same factories will be 
+                repeated at each level.  The entries in the inner lists will be 
+                executed back-to-back, but each will get it's own skip 
+                connection.  The functions should have the following 
+                signature::
 
                     encoder_factory(
                             *,
                             in_type: escnn.nn.FieldType,
                             out_type: escnn.nn.FieldType,
                             time_dim: int,
-                            depth: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
             decoder_factories:
-                A list of functions that can be used to instantiate the 
-                non-equivariant "blocks" making up the U-Net decoder.  In each 
-                level of the U-Net, each of the blocks produces by the 
-                functions will be invoked in order.  The functions should have 
-                the following signature::
+                A list-of-list-of-functions that can be used to instantiate the 
+                non-equivariant "blocks" making up the U-Net decoder.  Refer to 
+                *encoder_factories* for details.  Note that the factories 
+                specified here will be invoked in reverse order.  In other 
+                words, this means that you should specify the factories in the 
+                same order that you would for the encoder argument.  The 
+                functions should have the following signature::
 
                     decoder_factory(
                             *,
                             in_channels: int,
                             out_channels: int,
                             time_dim: int,
-                            depth: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
             latent_factory:
@@ -105,6 +110,7 @@ class SemiSymUNet(UNet):
                 signature::
 
                     latent_factory(
+                            *,
                             field_type: escnn.nn.FieldType,
                     ) -> nn.Module | Iterable[nn.Module]
 
@@ -115,7 +121,10 @@ class SemiSymUNet(UNet):
                 should not alter the number of channels.  The function should 
                 have the following signature::
 
-                    downsample_factory() -> nn.Module | Iterable[nn.Module]
+                    downsample_factory(
+                            *,
+                            field_type: escnn.nn.FieldType,
+                    ) -> nn.Module | Iterable[nn.Module]
 
             upsample_factory:
                 A function than can be used to instantiate one or more 
@@ -124,7 +133,10 @@ class SemiSymUNet(UNet):
                 These modules should not alter the number of channels.  The 
                 function should have the following signature::
 
-                    upsample_factory() -> nn.Module | Iterable[nn.Module]
+                    upsample_factory(
+                            *,
+                            channels: int,
+                    ) -> nn.Module | Iterable[nn.Module]
 
             time_dim:
                 The dimension of the time embedding that will be passed to the 
@@ -144,11 +156,21 @@ class SemiSymUNet(UNet):
                 factories.  This factory should have the following signature:
 
                     time_factory(
-                        time_dim: int,
+                            *,
+                            time_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
         """
         encoder_types = list(encoder_types)
+        encoder_factories = require_nested_list(
+                encoder_factories,
+                rows=len(encoder_types) - 1,
+        )
+        decoder_factories = require_nested_list(
+                decoder_factories,
+                rows=len(encoder_types) - 1,
+        )
         gspace = encoder_types[0].gspace
+
         self.in_type = one(make_trivial_field_type(gspace, img_channels))
         self.img_channels = img_channels
 
@@ -156,7 +178,6 @@ class SemiSymUNet(UNet):
 
         def iter_unet_blocks():
             t1, t2 = self.in_type, encoder_types[0]
-            max_depth = len(encoder_types) - 2
             
             head = head_factory(
                     in_type=t1,
@@ -164,17 +185,18 @@ class SemiSymUNet(UNet):
             )
             yield NoSkip.from_layers(head)
 
-            for i, (in_type, out_type) in enumerate(pairwise(encoder_types)):
-                for is_first, _, factory in mark_ends(encoder_factories):
+            for _, is_last_i, (in_type, out_type, encoder_factories_i) in \
+                    mark_ends(iter_encoder_params()):
+
+                for is_first_j, _, factory in mark_ends(encoder_factories_i):
                     encoder = factory(
-                            in_type=in_type if is_first else out_type,
+                            in_type=in_type if is_first_j else out_type,
                             out_type=out_type,
                             time_dim=time_dim,
-                            depth=i,
                     )
                     yield PushSkip.from_layers(encoder)
 
-                if i != max_depth:
+                if not is_last_i:
                     yield NoSkip.from_layers(downsample_factory(out_type))
 
             latent = latent_factory(
@@ -183,16 +205,17 @@ class SemiSymUNet(UNet):
             )
             yield NoSkip.from_layers(latent)
 
-            for i, (in_type, out_type) in enumerate(pairwise(reversed(encoder_types))):
-                if i != 0:
-                    yield NoSkip.from_layers(upsample_factory())
+            for is_first_i, _, (in_channels, out_channels, decoder_factories_i) in \
+                    mark_ends(iter_decoder_params()):
 
-                for _, is_last, factory in mark_ends(decoder_factories):
+                if not is_first_i:
+                    yield NoSkip.from_layers(upsample_factory(in_channels))
+
+                for _, is_last_j, factory in mark_ends(reversed(decoder_factories_i)):
                     decoder = factory(
-                            in_channels=PopSkip.adjust_in_channels(in_type.size),
-                            out_channels=in_type.size if not is_last else out_type.size,
+                            in_channels=PopSkip.adjust_in_channels(in_channels),
+                            out_channels=in_channels if not is_last_j else out_channels,
                             time_dim=time_dim,
-                            depth=max_depth - i,
                     )
                     yield PopSkip.from_layers(decoder)
 
@@ -202,6 +225,24 @@ class SemiSymUNet(UNet):
             )
             yield NoSkip.from_layers(tail)
             
+        def iter_encoder_params():
+            params = zip(
+                    pairwise(encoder_types),
+                    encoder_factories,
+                    strict=True,
+            )
+            for in_out_type, encoder_factories_i in params:
+                yield *in_out_type, encoder_factories_i
+
+        def iter_decoder_params():
+            params = zip(
+                    pairwise(reversed(encoder_types)),
+                    reversed(decoder_factories),
+                    strict=True,
+            )
+            for (in_type, out_type), decoder_factories_i in params:
+                yield in_type.size, out_type.size, decoder_factories_i
+
         super().__init__(
                 blocks=iter_unet_blocks(),
                 time_embedding=time_factory(time_dim),

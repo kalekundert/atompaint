@@ -3,6 +3,7 @@ import torch.nn as nn
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.upsampling import R3Upsampling
 from atompaint.field_types import make_trivial_field_type
+from atompaint.utils import require_nested_list
 
 from escnn.nn import (
         GeometricTensor,
@@ -27,7 +28,7 @@ class SymUNet(UNet):
             field_types: Iterable[FieldType],
             head_factory: LayerFactory,
             tail_factory: LayerFactory,
-            block_factories: list[LayerFactory],
+            block_factories: list[list[LayerFactory]],
             latent_factory: LayerFactory,
             downsample_factory: LayerFactory,
             upsample_factory: LayerFactory,
@@ -36,7 +37,12 @@ class SymUNet(UNet):
             skip_algorithm: Literal['cat', 'add'] = 'cat',
     ):
         field_types = list(field_types)
+        block_factories = require_nested_list(
+                block_factories,
+                rows=len(field_types) - 1,
+        )
         gspace = field_types[0].gspace
+
         self.in_type = one(make_trivial_field_type(gspace, img_channels))
         self.out_type = self.in_type
         self.img_channels = img_channels
@@ -52,16 +58,18 @@ class SymUNet(UNet):
             )
             yield NoSkip.from_layers(head)
 
-            for _, is_last, (in_type, out_type) in mark_ends(pairwise(field_types)):
-                for is_first, _, factory in mark_ends(block_factories):
+            for _, is_last_i, (in_type, out_type, block_factories_i) in \
+                    mark_ends(iter_encoder_params()):
+
+                for is_first_j, _, factory in mark_ends(block_factories_i):
                     encoder = factory(
-                            in_type=in_type if is_first else out_type,
+                            in_type=in_type if is_first_j else out_type,
                             out_type=out_type,
                             time_dim=time_dim,
                     )
                     yield PushSkip.from_layers(encoder)
 
-                if not is_last:
+                if not is_last_i:
                     yield NoSkip.from_layers(downsample_factory(out_type))
 
             latent = latent_factory(
@@ -70,14 +78,16 @@ class SymUNet(UNet):
             )
             yield NoSkip.from_layers(latent)
 
-            for is_first, _, (in_type, out_type) in mark_ends(pairwise(reversed(field_types))):
-                if not is_first:
+            for is_first_i, _, (in_type, out_type, block_factories_i) in \
+                    mark_ends(iter_decoder_params()):
+
+                if not is_first_i:
                     yield NoSkip.from_layers(upsample_factory(in_type))
 
-                for _, is_last, factory in mark_ends(block_factories):
+                for _, is_last_j, factory in mark_ends(block_factories_i):
                     decoder = factory(
                             in_type=PopSkip.adjust_in_channels(in_type),
-                            out_type=in_type if not is_last else out_type,
+                            out_type=in_type if not is_last_j else out_type,
                             time_dim=time_dim,
                     )
                     yield PopSkip.from_layers(decoder)
@@ -87,6 +97,20 @@ class SymUNet(UNet):
                     out_type=t1,
             )
             yield NoSkip.from_layers(tail)
+
+        def iter_encoder_params():
+            params = zip(pairwise(field_types), block_factories, strict=True)
+            for in_out_type, block_factories_i in params:
+                yield *in_out_type, block_factories_i
+
+        def iter_decoder_params():
+            params = zip(
+                    pairwise(reversed(field_types)),
+                    reversed(block_factories),
+                    strict=True,
+            )
+            for in_out_type, block_factories_i in params:
+                yield *in_out_type, block_factories_i
             
         super().__init__(
                 blocks=iter_unet_blocks(),

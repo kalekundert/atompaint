@@ -5,6 +5,7 @@ import torch.nn as nn
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.time_embedding import AddTimeToImage
 from atompaint.upsampling import Upsample3d
+from atompaint.utils import require_nested_list
 from einops import rearrange
 from more_itertools import pairwise
 from pipeline_func import f
@@ -21,7 +22,7 @@ class AsymUNet(UNet):
             channels: list[int],
             head_factory: LayerFactory,
             tail_factory: LayerFactory,
-            block_factories: list[LayerFactory],
+            block_factories: list[list[LayerFactory]],
             latent_factory: LayerFactory,
             downsample_factory: LayerFactory,
             upsample_factory: LayerFactory,
@@ -66,16 +67,20 @@ class AsymUNet(UNet):
                     ) -> nn.Module | Iterable[nn.Module]
 
             block_factory:
-                A function that can be used to instantiate the "blocks" making 
-                up the U-Net.  The function should have the following 
-                signature::
+                A list-of-lists-of-functions that can be used to instantiate 
+                the "blocks" making up the U-Net encoder.  Each entry in the 
+                outer list corresponds to a different input size.  This size of 
+                this list must match the number of channel pairs, or be 1, in 
+                which case the same factories will be repeated at each level.  
+                The factories in the inner lists will be executed back-to-back, 
+                but each will get it's own skip connection.  The functions 
+                should have the following signature::
 
                     block_factory(
                             *,
                             in_channels: int,
                             out_channels: int,
                             time_dim: int,
-                            depth: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
             latent_factory:
@@ -96,7 +101,10 @@ class AsymUNet(UNet):
                 the number of channels.  The function should have the following 
                 signature::
 
-                    downsample_factory() -> nn.Module | Iterable[nn.Module]
+                    downsample_factory(
+                            *,
+                            channels: int,
+                    ) -> nn.Module | Iterable[nn.Module]
 
             upsample_factory:
                 A function than can be used to instantiate one or more modules 
@@ -105,7 +113,10 @@ class AsymUNet(UNet):
                 alter the number of channels.  The function should have the 
                 following signature::
 
-                    upsample_factory() -> nn.Module | Iterable[nn.Module]
+                    upsample_factory(
+                            *,
+                            channels: int,
+                    ) -> nn.Module | Iterable[nn.Module]
 
             time_dim:
                 The dimension of the time embedding that will be passed to the 
@@ -125,35 +136,38 @@ class AsymUNet(UNet):
                 factories.  This factory should have the following signature:
 
                     time_factory(
-                        time_dim: int,
+                            *,
+                            time_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
         """
 
         PopSkip = get_pop_skip_class(skip_algorithm)
+        block_factories = require_nested_list(
+                block_factories,
+                rows=len(channels) - 2,
+        )
 
         def iter_unet_blocks():
             c1, c2 = channels[0:2]
-            encoder_channels = channels[1:]
-            max_depth = len(encoder_channels) - 2
-
             head = head_factory(
                     in_channels=c1,
                     out_channels=c2,
             )
             yield NoSkip.from_layers(head)
 
-            for i, (in_channels, out_channels) in enumerate(pairwise(encoder_channels)):
-                for is_first, _, factory in mark_ends(block_factories):
+            for _, is_last_i, (in_channels, out_channels, block_factories_i) in \
+                    mark_ends(iter_encoder_params()):
+
+                for is_first_j, _, factory in mark_ends(block_factories_i):
                     block = factory(
-                            in_channels=in_channels if is_first else out_channels,
+                            in_channels=in_channels if is_first_j else out_channels,
                             out_channels=out_channels,
                             time_dim=time_dim,
-                            depth=i,
                     )
                     yield PushSkip.from_layers(block)
 
-                if i != max_depth:
-                    yield NoSkip.from_layers(downsample_factory())
+                if not is_last_i:
+                    yield NoSkip.from_layers(downsample_factory(out_channels))
 
             latent = latent_factory(
                     channels=out_channels,
@@ -161,16 +175,17 @@ class AsymUNet(UNet):
             )
             yield NoSkip.from_layers(latent)
 
-            for i, (in_channels, out_channels) in enumerate(pairwise(reversed(encoder_channels))):
-                if i != 0:
-                    yield NoSkip.from_layers(upsample_factory())
+            for is_first_i, _, (in_channels, out_channels, block_factories_i) in \
+                    mark_ends(iter_decoder_params()):
 
-                for _, is_last, factory in mark_ends(block_factories):
+                if not is_first_i:
+                    yield NoSkip.from_layers(upsample_factory(in_channels))
+
+                for _, is_last_j, factory in mark_ends(reversed(block_factories_i)):
                     block = factory(
                             in_channels=PopSkip.adjust_in_channels(in_channels),
-                            out_channels=in_channels if not is_last else out_channels,
+                            out_channels=in_channels if not is_last_j else out_channels,
                             time_dim=time_dim,
-                            depth=max_depth - i,
                     )
                     yield PopSkip.from_layers(block)
 
@@ -179,6 +194,24 @@ class AsymUNet(UNet):
                     out_channels=c1,
             )
             yield NoSkip.from_layers(tail)
+
+        def iter_encoder_params():
+            params = zip(
+                    pairwise(channels[1:]),
+                    block_factories,
+                    strict=True,
+            )
+            for in_out_type, block_factories_i in params:
+                yield *in_out_type, block_factories_i
+
+        def iter_decoder_params():
+            params = zip(
+                    pairwise(reversed(channels[1:])),
+                    reversed(block_factories),
+                    strict=True,
+            )
+            for in_out_channels, block_factories_i in params:
+                yield *in_out_channels, block_factories_i
 
         super().__init__(
                 blocks=iter_unet_blocks(),
