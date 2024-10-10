@@ -252,3 +252,5 @@ def invariant_fourier_pool_layer(
     yield Require1x1x1()
     yield nn.Flatten()
 
+
+

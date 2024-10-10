@@ -41,7 +41,6 @@ class EvalModeCheckpointMixin:
         if is_training:
             self.train()
 
-
 def load_model_weights(
         model,
         path,
