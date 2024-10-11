@@ -80,20 +80,7 @@ class KarrasDiffusion(L.LightningModule):
         sigma_data = self.model.sigma_data
         weight = (sigma**2 + sigma_data**2) / (sigma * sigma_data)**2
         loss = weight * (x_pred - x_clean)**2
-
-        # The reference code divides by the batch size
-        #loss = loss.sum().mul(1/64)
-
-        # This is another way to implement the same calculation as in the 
-        # reference code; here the division by the batch size is implicit.
         loss = reduce(loss, 'b c ... -> c ...', 'mean').sum()
-
-        # loss = (x_pred - x_clean)**2
-        # loss = reduce(loss, 'b c ... -> b c', 'mean')
-        # loss = torch.mean(weight * loss)
-
-        # debug(loss.sum(), weight.sum())
-        # raise SystemExit
 
         return loss
 
@@ -194,6 +181,9 @@ class GenerateParams:
     S_min: float = 0
     S_max: float = float('inf')
 
+    clamp_low: float = 0
+    clamp_high: float = 1
+
     batch_size: int = 1
 
 @torch.no_grad()
@@ -224,50 +214,21 @@ def generate(
         dx_dt1 = (x_cur - model(x_cur, t_cur)) / t_cur
         x_next = x_cur + (t_next - t_cur) * dx_dt1
 
-        # import matplotlib.pyplot as plt
-        # from einops import rearrange
-
-        # for i, x in enumerate([x_cur, model(x_cur, t1), dx_dt1, x_next]):
-        #     plt.subplot(3, 4, i+1)
-        #     plt.imshow(
-        #             rearrange(
-        #                 x, 
-        #                 'b c w h -> (b c w) (h)',
-        #             )
-        #     )
-        #     plt.colorbar()
-
         if t_next > 0:
             dx_dt2 = (x_next - model(x_next, t_next)) / t_next
             x_next = x_cur + (t_next - t_cur) * (dx_dt1 + dx_dt2) / 2
 
-        # for i, x in enumerate([model(x_next, t2), dx_dt2, x_next]):
-        #     plt.subplot(3, 4, i+6)
-        #     plt.imshow(
-        #             rearrange(
-        #                 x, 
-        #                 'b c w h -> (b c w) (h)',
-        #             )
-        #     )
-        #     plt.colorbar()
-
         if record_trajectory:
             traj[i] = x_next
-
-            # plt.subplot(3, 4, 12)
-            # plt.imshow(
-            #         rearrange(
-            #             traj[i], 
-            #             'b c w h -> (b c w) (h)',
-            #         )
-            # )
-            # plt.colorbar()
-
             i += 1
 
-        #plt.show()
-
         x_cur = x_next
+
+    x_cur = torch.clamp(
+            x_cur,
+            min=params.clamp_low,
+            max=params.clamp_high,
+    )
 
     if record_trajectory:
         return traj

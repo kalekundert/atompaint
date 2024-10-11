@@ -142,15 +142,13 @@ class FrechetNeighborLocDistance(Metric):
         )
 
     def compute(self):
-        from torchmetrics.image.fid import _compute_fid
-
         if is_lazy(self.ref_mean):
             raise ValueError("must load reference statistics to calculate Fréchet distance\n• Did you remember to call `load_reference_stats()`?")
 
         cov = _calc_cov(self.ncov, self.n)
         ref_cov = _calc_cov(self.ref_ncov, self.ref_n)
 
-        return _compute_fid(self.mean, cov, self.ref_mean, ref_cov)
+        return _calc_fid(self.mean, cov, self.ref_mean, ref_cov)
 
     def load_reference_stats(self, ref_path):
         ref_stats = torch.load(
@@ -283,6 +281,61 @@ def _get_slices(bool_vec, view_params):
     slice_map = slice(0, L), slice(L + pad, 2*L + pad)
     return tuple(slice_map[x] for x in bool_vec)
 
+
+def _calc_fid(mean, cov, ref_mean, ref_cov):
+    r"""
+    Compute the Fréchet distance between the two given multivariate Gaussian 
+    distributions.
+
+    Consider two multivariate Gaussian distributions $\mathcal{N}(\mu_1, 
+    \Sigma_1)$ and $\mathcal{N}(\mu_2, \Sigma_2)$.  The Fréchet distance, also 
+    known as 2-Wasserstein distance, between these two distributions is given 
+    by the following equation:
+
+    $$
+    d^2 = \norm{\mu_1 - \mu_2}^2 + \mathrm{Tr} \left[ \Sigma_1 + \Sigma_2 - 2 \sqrt{\Sigma_1 \Sigma_2} \right]
+    $$
+
+    This implementation is mostly copied from `torchmetrics.image.fid`, but 
+    contains an additional check for NaN/inf values in either of the covariance 
+    parameters, as these can lead to segfaults in the underlying linear algebra 
+    libraries.
+
+    Args:
+        mean: mean of activations calculated on predicted (x) samples
+        cov: covariance matrix over activations calculated on predicted (x) samples
+        ref_mean: mean of activations calculated on target (y) samples
+        ref_cov: covariance matrix over activations calculated on target (y) samples
+
+    Returns:
+        Scalar value of the distance between distributions.
+    """
+
+    ΣΣ = cov @ ref_cov
+
+    # `torch.linalg.eigvals()` can segfault when given non-finite inputs [1].  
+    # I ran into this issue with poorly trained models that generated images 
+    # with voxel values on the order of 1e20 and infinite standard deviations.
+    #
+    # I solved this particular problem by clamping the generated images to the 
+    # range [0, 1].  But it's also prudent to check for non-finite inputs and 
+    # avoid segfaults.  I decided to silently return NaN instead of raising an 
+    # exception, because this code is used in evaluating models.  Just because 
+    # a model is bad at one evaluation point doesn't mean it won't get better, 
+    # so there's no need to terminate the whole training run when this 
+    # condition is detected.
+    #
+    # [1]: https://github.com/pytorch/pytorch/issues/93124
+
+    if not torch.isfinite(ΣΣ).all():
+        return float('nan')
+
+    a = (mean - ref_mean).square().sum(dim=-1)
+    b = cov.trace() + ref_cov.trace()
+    c = torch.linalg.eigvals(ΣΣ).sqrt().real.sum(dim=-1)
+    d = a + b - 2 * c
+
+    return d.item()
 
 def _calc_cov(ncov, n):
     assert n >= 2
