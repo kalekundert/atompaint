@@ -4,6 +4,7 @@ import lightning as L
 import torch
 import torch.nn as nn
 import numpy as np
+import sys
 
 from atompaint.metrics.neighbor_loc import (
         NeighborLocAccuracy, FrechetNeighborLocDistance,
@@ -120,7 +121,7 @@ class KarrasDiffusion(L.LightningModule):
 
         rng = np.random.default_rng(0)
 
-        for i in trange(32, desc="Generative metrics"):
+        for i in trange(32, desc="Generative metrics", file=sys.stdout):
             x = generate(rng, self.model, self.gen_params)
 
             for metric in self.gen_metrics.values():
@@ -195,7 +196,7 @@ class GenerateParams:
 
     batch_size: int = 1
 
-@torch.no_grad
+@torch.no_grad()
 def generate(
         rng,
         model: KarrasPrecond,
