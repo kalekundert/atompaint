@@ -55,7 +55,8 @@ class KarrasDiffusion(L.LightningModule):
         }
         self.gen_metrics['frechet_dist'].load_reference_stats(frechet_ref_path)
 
-        # [Karras2022], Table 1
+        # [Karras2022], Table 1.  This mean and standard deviation should lead 
+        # to σ values in roughly the range [1.9e-3, 5.4e2].
         self.P_mean = -1.2
         self.P_std = 1.2
 
@@ -63,15 +64,11 @@ class KarrasDiffusion(L.LightningModule):
         return self.optimizer
 
     def forward(self, x):
-        x_clean, noise, t_uniform = x
+        x_clean, noise, rngs = x
         d = x_clean.ndim - 2
 
-        # Determine how much noise to add.  The dataset provides us with a 
-        # uniformly-distributed random value for this purpose.  To implement 
-        # [Karras2022], however, we need a normally-distributed value.  We get 
-        # this via the inverse CDF of the normal distribution.
-        norm = torch.distributions.Normal(loc=self.P_mean, scale=self.P_std)
-        t_norm = norm.icdf(t_uniform)
+        t_norm = rngs.normal(loc=self.P_mean, scale=self.P_std)
+        t_norm = t_norm.to(dtype=torch.float32, device=x_clean.device)
         sigma = torch.exp(t_norm).reshape(-1, 1, *([1] * d))
 
         x_noisy = x_clean + sigma * noise
@@ -162,6 +159,8 @@ class KarrasPrecond(nn.Module):
         c_skip = sigma_data ** 2 / (sigma ** 2 + sigma_data ** 2)
         c_out = sigma * sigma_data / (sigma ** 2 + sigma_data ** 2).sqrt()
         c_in = 1 / (sigma_data ** 2 + sigma ** 2).sqrt()
+        # [Karras2022] includes this log-transformation, but I don't think it 
+        # makes sense.  See Experiment 83 for details.
         #c_noise = sigma.log() / 4
         c_noise = sigma
 
@@ -180,6 +179,13 @@ class GenerateParams:
     S_churn: float = 0
     S_min: float = 0
     S_max: float = float('inf')
+
+    # The mean and standard deviation of the underlying dataset, if the model 
+    # was trained on data where these parameters were normalized.  More 
+    # prescriptively, these values should match the values of `normalize_mean` 
+    # and `normalize_std` that were passed to `MacromolImageDiffusionData`.
+    unnormalize_mean: float = 0
+    unnormalize_std: float = 1
 
     clamp_low: float = 0
     clamp_high: float = 1
@@ -224,16 +230,18 @@ def generate(
 
         x_cur = x_next
 
-    x_cur = torch.clamp(
-            x_cur,
-            min=params.clamp_low,
-            max=params.clamp_high,
-    )
-
     if record_trajectory:
-        return traj
+        x_out = traj
     else:
-        return x_cur
+        x_out = x_cur
+
+    # On tensors this big, in-place operations are slightly faster.  It's a 
+    # minor effect, though.
+    x_out.mul_(params.unnormalize_std)
+    x_out.add_(params.unnormalize_mean)
+    x_out.clamp_(params.clamp_low, params.clamp_high)
+
+    return x_out
 
 def _calc_sigma_schedule(params):
     n = params.time_steps
