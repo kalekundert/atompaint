@@ -41,6 +41,9 @@ class EvalModeCheckpointMixin:
         if is_training:
             self.train()
 
+def get_artifact_dir():
+    return Path(os.environ['AP_MODEL_WEIGHTS'])
+
 def load_model_weights(
         model,
         path,
@@ -50,7 +53,7 @@ def load_model_weights(
         xxh32sum: Optional[str] = None,
         mode: Literal['eval', 'train'] = 'eval',
 ):
-    ckpt_path = Path(os.environ['AP_MODEL_WEIGHTS']) / path
+    ckpt_path = get_artifact_dir() / path
 
     if xxh32sum:
         ckpt_bytes = ckpt_path.read_bytes()
