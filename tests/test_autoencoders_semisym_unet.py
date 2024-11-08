@@ -10,9 +10,9 @@ from atompaint.layers import UnwrapTensor
 from atompaint.field_types import make_fourier_field_types
 from atompaint.upsampling import Upsample3d
 from atompaint.time_embedding import SinusoidalEmbedding, LinearTimeActivation
-from atompaint.utils import partial_grid, rows
 from escnn.nn import R3Conv, IIDBatchNorm3d, FourierPointwise, PointwiseAvgPoolAntialiased3D
 from escnn.gspaces import rot3dOnR3
+from multipartial import multipartial, rows
 from torchtest import assert_vars_change
 
 @pytest.mark.parametrize('skip_algorithm', ['cat', 'add'])
@@ -97,8 +97,8 @@ def test_semisym_unet(skip_algorithm):
             head_factory=head_factory,
             tail_factory=tail_factory,
 
-            encoder_factories=partial_grid(cols=2)(encoder_factory),
-            decoder_factories=partial_grid(cols=2)(
+            encoder_factories=multipartial[:,2](encoder_factory),
+            decoder_factories=multipartial[:,2](
                 decoder_factory,
                 attention=rows(False, True),
             ),

@@ -1,9 +1,9 @@
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.field_types import make_trivial_field_type
-from atompaint.utils import require_nested_list
 from torch import Tensor
 from escnn.nn import GeometricTensor
 from more_itertools import one, pairwise, mark_ends
+from multipartial import require_grid
 
 from typing import Iterable, Literal
 from torchyield import LayerFactory
@@ -161,11 +161,11 @@ class SemiSymUNet(UNet):
                     ) -> nn.Module | Iterable[nn.Module]
         """
         encoder_types = list(encoder_types)
-        encoder_factories = require_nested_list(
+        encoder_factories = require_grid(
                 encoder_factories,
                 rows=len(encoder_types) - 1,
         )
-        decoder_factories = require_nested_list(
+        decoder_factories = require_grid(
                 decoder_factories,
                 rows=len(encoder_types) - 1,
         )

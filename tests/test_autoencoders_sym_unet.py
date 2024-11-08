@@ -4,11 +4,10 @@ import pytest
 import parametrize_from_file as pff
 
 from atompaint.autoencoders.sym_unet import SymUNet, SymUNetBlock
-from atompaint.layers import conv_bn_fourier_layer
+from atompaint.layers import sym_conv_bn_fourier_layer
 from atompaint.field_types import make_fourier_field_types
 from atompaint.upsampling import R3Upsampling
 from atompaint.time_embedding import SinusoidalEmbedding, LinearTimeActivation
-from atompaint.utils import partial_grid
 from atompaint.vendored.escnn_nn_testing import (
         check_equivariance, get_exact_3d_rotations,
 )
@@ -17,6 +16,7 @@ from escnn.nn import (
         PointwiseAvgPoolAntialiased3D,
 )
 from escnn.gspaces import rot3dOnR3
+from multipartial import multipartial
 from torchtest import assert_vars_change
 
 from test_time_embedding import ModuleWrapper, InputWrapper
@@ -33,7 +33,7 @@ def test_sym_unet(skip_algorithm):
     grid = so3.grid(type='thomson_cube', N=4)
 
     def head_factory(in_type, out_type):
-        yield from conv_bn_fourier_layer(in_type, out_type, ift_grid=grid)
+        yield from sym_conv_bn_fourier_layer(in_type, out_type, ift_grid=grid)
 
     def tail_factory(in_type, out_type):
         yield R3ConvTransposed(in_type, out_type, kernel_size=3)
@@ -88,7 +88,7 @@ def test_sym_unet(skip_algorithm):
             ),
             head_factory=head_factory,
             tail_factory=tail_factory,
-            block_factories=partial_grid(1, 2)(block_factory),
+            block_factories=multipartial[1,2](block_factory),
             latent_factory=latent_factory,
             downsample_factory=downsample_factory,
             upsample_factory=upsample_factory,

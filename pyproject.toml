@@ -22,6 +22,7 @@ dependencies = [
   'macromol_gym_pretrain',
   'macromol_voxelize',
   'more_itertools',
+  'multipartial',
   'nestedtext',
   'numpy',
   'overlap',

@@ -6,11 +6,14 @@ from atompaint.classifiers.neighbor_loc import (
         make_neighbor_loc_model, make_fourier_mlp_field_types
 
 )
-from atompaint.encoders.cnn import FourierCnn
-from atompaint.layers import linear_fourier_layer
+from atompaint.encoders import SymEncoder
+from atompaint.layers import (
+        sym_conv_bn_fourier_layer, sym_conv_layer, sym_linear_fourier_layer, 
+)
+from atompaint.field_types import make_fourier_field_types
 from atompaint.vendored.escnn_nn_testing import get_exact_3d_rotations
 from escnn.nn import FourierFieldType, GeometricTensor
-from escnn.gspaces import no_base_space
+from escnn.gspaces import rot3dOnR3, no_base_space
 from escnn.group import so3_group
 from functools import partial
 from utils import *
@@ -49,12 +52,22 @@ def classifier_equivariance(*, require_grids=None):
 
 
 def test_view_pair_encoder_equivariance():
-    cnn = FourierCnn(
-            channels=[1, 1, 1, 1],
-            conv_field_of_view=3,
-            conv_stride=1,
-            conv_padding=0,
-            frequencies=2,
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    ift_grid = so3.grid('thomson_cube', N=4)
+
+    cnn = SymEncoder(
+            in_channels=1,
+            field_types=make_fourier_field_types(
+                gspace=gspace, 
+                channels=[1, 1, 1],
+                max_frequencies=2,
+            ),
+            block_factories=partial(
+                sym_conv_bn_fourier_layer,
+                ift_grid=ift_grid,
+            ),
+            tail_factory=sym_conv_layer,
     )
     encoder = SymViewPairEncoder(cnn)
 
@@ -108,7 +121,7 @@ def test_view_pair_classifier_equivariance(inputs):
                 max_frequencies=max_freq,
             ),
             layer_factory=partial(
-                linear_fourier_layer,
+                sym_linear_fourier_layer,
                 ift_grid=so3.grid('thomson_cube', 4),
             ),
             logits_max_freq=max_freq,

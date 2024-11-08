@@ -3,14 +3,13 @@ import torch.nn as nn
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.upsampling import R3Upsampling
 from atompaint.field_types import make_trivial_field_type
-from atompaint.utils import require_nested_list
-
 from escnn.nn import (
         GeometricTensor,
         R3Conv, R3ConvTransposed, IIDBatchNorm3d, SequentialModule,
 )
 from itertools import pairwise
 from more_itertools import one, mark_ends
+from multipartial import require_grid
 from pipeline_func import f
 
 from torch import Tensor
@@ -37,7 +36,7 @@ class SymUNet(UNet):
             skip_algorithm: Literal['cat', 'add'] = 'cat',
     ):
         field_types = list(field_types)
-        block_factories = require_nested_list(
+        block_factories = require_grid(
                 block_factories,
                 rows=len(field_types) - 1,
         )

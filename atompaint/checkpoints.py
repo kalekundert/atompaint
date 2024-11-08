@@ -1,9 +1,11 @@
 import torch
 import os
 
+from atompaint.utils import identity
+from torch import Tensor
 from xxhash import xxh32_hexdigest
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional, Literal, Callable
 
 class EvalModeCheckpointMixin:
     """
@@ -48,7 +50,7 @@ def load_model_weights(
         model,
         path,
         *,
-        prefix,
+        fix_keys: Callable[[str], str] = identity,
         device=None,
         xxh32sum: Optional[str] = None,
         mode: Literal['eval', 'train'] = 'eval',
@@ -62,7 +64,7 @@ def load_model_weights(
             raise RuntimeError(f"weights file has the wrong hash\n• path: {ckpt_path}\n• expected xxh32sum: {xxh32sum}\n• actual xxh32sum: {actual_xxh32sum}")
 
     ckpt = torch.load(ckpt_path, map_location=device)
-    weights = extract_state_dict(ckpt['state_dict'], prefix)
+    weights = extract_state_dict(ckpt['state_dict'], fix_keys=fix_keys)
 
     if mode == 'eval':
         model.eval()
@@ -70,10 +72,26 @@ def load_model_weights(
 
     model.load_state_dict(weights)
 
-def extract_state_dict(state_dict, prefix):
-    i = len(prefix)
-    return {
-            k[i:]: v
-            for k, v in state_dict.items()
-            if k.startswith(prefix)
-    }
+def extract_state_dict(
+        state_dict: dict[str, Tensor],
+        *,
+        fix_keys: Callable[[str], str] = identity,
+):
+    out = {}
+
+    for k, v in state_dict.items():
+        try:
+            out[fix_keys(k)] = v
+        except DropKey:
+            continue
+
+    return out
+
+def strip_prefix(k, *, prefix):
+    if k.startswith(prefix):
+        return k[len(prefix):]
+    raise DropKey
+
+class DropKey(Exception):
+    pass
+

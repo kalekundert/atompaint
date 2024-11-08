@@ -5,11 +5,11 @@ import torch.nn as nn
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.time_embedding import AddTimeToImage
 from atompaint.upsampling import Upsample3d
-from atompaint.utils import require_nested_list
 from einops import rearrange
 from more_itertools import pairwise
 from pipeline_func import f
 from more_itertools import mark_ends
+from multipartial import require_grid
 
 from typing import Literal, Callable
 from torchyield import LayerFactory
@@ -142,7 +142,7 @@ class AsymUNet(UNet):
         """
 
         PopSkip = get_pop_skip_class(skip_algorithm)
-        block_factories = require_nested_list(
+        block_factories = require_grid(
                 block_factories,
                 rows=len(channels) - 2,
         )

@@ -2,17 +2,20 @@ import lightning.pytorch as pl
 import torch.nn.functional as F
 import torchyield as ty
 import torch
+import re
 
 from atompaint.field_types import (
-        make_top_level_field_types, make_fourier_field_types,
-        make_polynomial_field_types, make_exact_polynomial_field_types,
+        make_fourier_field_types, make_polynomial_field_types,
+        make_exact_polynomial_field_types,
 )
 from atompaint.layers import (
-        conv_layer, conv_bn_fourier_layer, conv_bn_gated_layer,
-        linear_fourier_layer, gated_layer
+        sym_conv_layer, sym_conv_bn_fourier_layer, sym_conv_bn_gated_layer,
+        sym_linear_fourier_layer
 )
 from atompaint.nonlinearities import leaky_hard_shrink, first_hermite
-from atompaint.checkpoints import EvalModeCheckpointMixin, load_model_weights
+from atompaint.checkpoints import (
+        EvalModeCheckpointMixin, load_model_weights, strip_prefix,
+)
 from escnn.nn import (
         FieldType, FourierFieldType, GeometricTensor, InverseFourierTransform,
         SequentialModule, Linear, tensor_directsum, 
@@ -24,6 +27,8 @@ from torch.optim import Adam
 from torchmetrics import Accuracy
 from itertools import pairwise
 from functools import partial
+from multipartial import multipartial, Dim, dim, put
+from pipeline_func import f, X
 
 from typing import Iterable, Optional
 from torchyield import Layer, LayerFactory
@@ -130,11 +135,8 @@ class SymViewPairEncoder(Module):
         self.encoder = encoder
 
     def forward(self, x: torch.Tensor) -> GeometricTensor:
-        x0 = GeometricTensor(x[:,0], self.encoder.in_type)
-        x1 = GeometricTensor(x[:,1], self.encoder.in_type)
-
-        y0 = self.encoder(x0)
-        y1 = self.encoder(x1)
+        y0 = self.encoder(x[:,0])
+        y1 = self.encoder(x[:,1])
 
         return _flatten_base_space(tensor_directsum([y0, y1]))
 
@@ -283,11 +285,21 @@ class AsymViewPairClassifier(Module):
         return self.classifier(x)
 
 def load_expt_72_model(*, device=None):
+
+    def rename_old_keys(k):
+        return (
+                k
+                | f(strip_prefix, prefix='model.')
+                | f(re.sub, r'encoder\.layers\.', r'encoder.', X)
+                | f(re.sub, r'(\d+)\.nonlin(\d+)\.', r'\1.act\2.', X)
+                | f(re.sub, r'(\d+)\.pool\.', r'\1.resize.', X)
+        )
+
     classifier = make_expt_72_model()
     load_model_weights(
             model=classifier,
             path='expt_72/padding=2-6A;angle=40deg;image-size=24A;job-id=40481465;epoch=49.ckpt',
-            prefix='model.',
+            fix_keys=rename_old_keys,
             xxh32sum='e4b0330d',
             device=device,
     )
@@ -309,18 +321,28 @@ def make_expt_72_model():
     )
 
 def load_expt_94_model(*, device=None):
+
+    def rename_old_keys(k):
+        return (
+                k
+                | f(strip_prefix, prefix='model.')
+                | f(re.sub, r'encoder\.layers\.', r'encoder.', X)
+                | f(re.sub, r'(\d+)\.nonlin(\d+)\.', r'\1.act\2.', X)
+                | f(re.sub, r'(\d+)\.pool\.', r'\1.resize.', X)
+        )
+
     classifier = make_expt_94_model()
     load_model_weights(
             model=classifier,
             path='expt_94/block=gamma;channels=log-16;image-size=15A;job-id=48156726;epoch=99.ckpt',
-            prefix='model.',
+            fix_keys=rename_old_keys,
             xxh32sum='ec925b15',
             device=device,
     )
     return classifier
 
 def make_expt_94_model():
-    from atompaint.encoders.resnet import make_expt_94_resnet
+    from atompaint.encoders.sym_resnet import make_expt_94_resnet
 
     resnet = make_expt_94_resnet()
     mlp = ty.mlp_layer(
@@ -368,14 +390,14 @@ def make_neighbor_loc_model(
         **kwargs,
 ):
     MODEL_FACTORIES = {
-            'cnn': make_cnn,
+            'cnn': make_sym_cnn,
             'cnn-noneq': make_asym_cnn,
-            'resnet': make_resnet,
-            'densenet': make_densenet,
+            'resnet': make_sym_resnet,
+            'densenet': make_sym_densenet,
     }
     return MODEL_FACTORIES[architecture](**kwargs)
 
-def make_cnn(
+def make_sym_cnn(
         *,
         frequencies: int,
         conv_channels: list[int],
@@ -385,19 +407,62 @@ def make_cnn(
         mlp_channels: int | list[int],
         equivariant_mlp: bool = True,
 ):
-    from atompaint.encoders.cnn import FourierCnn
-    from atompaint.layers import linear_fourier_layer
+    from atompaint.encoders import SymEncoder
+    from atompaint.layers import sym_linear_fourier_layer
+
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    ift_grid = so3.grid('thomson_cube', N=4)
+    n = len(conv_channels)
+
+    def cnn_layer(
+            in_type,
+            out_type,
+            *,
+            kernel_size,
+            stride,
+            padding,
+            batch_norm,
+    ):
+        # The purpose of this custom layer is mimic my original CNN 
+        # implementation, which skipped batch normalization in the last layer.  
+        # This is when the latent representation becomes small, typically 
+        # 1x1x1, and so that statistics become less reliable.  In the extreme 
+        # case where the batch size is 1, it even becomes impossible to 
+        # calculate variance.
+        #
+        # If I were writing a new CNN from scratch, I'd probably handle this 
+        # problem using `tail_factory` rather than a custom `block_factory`.  
+        # But my goal here is to output the same model as before.
+
+        conv, bn, act = sym_conv_bn_fourier_layer(
+                in_type, out_type,
+                kernel_size=kernel_size,
+                stride=stride,
+                ift_grid=ift_grid,
+        )
+        yield conv
+        if batch_norm:
+            yield bn
+        yield act
 
     encoder = SymViewPairEncoder(
-            FourierCnn(
-                channels=conv_channels,
-                conv_field_of_view=conv_field_of_view,
-                conv_stride=conv_stride,
-                conv_padding=conv_padding,
-                frequencies=frequencies,
+            SymEncoder(
+                in_channels=conv_channels[0],
+                field_types=make_fourier_field_types(
+                    gspace=gspace, 
+                    channels=conv_channels[1:],
+                    max_frequencies=frequencies,
+                ),
+                block_factories=multipartial[n-1,1](
+                    cnn_layer,
+                    kernel_size=Dim[0](conv_field_of_view),
+                    stride=Dim[0](conv_stride),
+                    padding=Dim[0](conv_padding),
+                    batch_norm=put[-1,-1](False, True),
+                ),
             ),
     )
-    so3 = encoder.out_type.fibergroup
 
     if equivariant_mlp:
         classifier = SymViewPairClassifier(
@@ -407,8 +472,8 @@ def make_cnn(
                     max_frequencies=frequencies,
                 ),
                 layer_factory=partial(
-                    linear_fourier_layer,
-                    ift_grid=so3.grid('thomson_cube', N=4),
+                    sym_linear_fourier_layer,
+                    ift_grid=ift_grid,
                 ),
                 logits_max_freq=frequencies,
 
@@ -440,17 +505,20 @@ def make_asym_cnn(
         pool_sizes: int | list[int],
         mlp_channels: int | list[int],
 ):
-    from atompaint.encoders.cnn import NonequivariantCnn
+    from atompaint.encoders import Encoder
 
     assert mlp_channels[-1] == 6
 
     encoder = AsymViewPairEncoder(
-            NonequivariantCnn(
+            Encoder(
                 channels=conv_channels,
-                kernel_sizes=conv_kernel_sizes,
-                strides=conv_strides,
-                paddings=conv_paddings,
-                pool_sizes=pool_sizes,
+                block_factories=multipartial[:,1](
+                    ty.conv3_bn_relu_maxpool,
+                    kernel_size=Dim[0](conv_kernel_sizes),
+                    stride=Dim[0](conv_strides),
+                    padding=Dim[0](conv_paddings),
+                    pool_stride=Dim[0](pool_sizes),
+                ),
             ),
     )
     classifier = AsymViewPairClassifier(
@@ -465,7 +533,7 @@ def make_asym_cnn(
             classifier=classifier,
     )
 
-def make_resnet(
+def make_sym_resnet(
         *,
         block_type: str,
         resnet_outer_channels: list[int],
@@ -479,38 +547,39 @@ def make_resnet(
         mlp_channels: list[int],
         equivariant_mlp: bool = True,
 ):
-    from atompaint.encoders.resnet import (
-            ResNet,
+    from atompaint.encoders import SymEncoder
+    from atompaint.encoders.sym_resnet import (
             make_escnn_example_block, make_alpha_block, make_beta_block,
     )
+    from atompaint.encoders.utils import toggle_pool
     from atompaint.utils import parse_so3_grid
 
     gspace = rot3dOnR3()
     so3 = gspace.fibergroup
-    grid_elements = parse_so3_grid(so3, grid) if grid else None
+    ift_grid = parse_so3_grid(so3, grid) if grid else None
 
     if block_type == 'escnn':
         assert polynomial_terms
         assert max_frequency > 0
         assert grid
 
-        outer_types = make_top_level_field_types(
+        outer_types = make_polynomial_field_types(
                 gspace=gspace, 
-                channels=resnet_outer_channels,
-                make_nontrivial_field_types=partial(
-                    make_polynomial_field_types,
-                    terms=polynomial_terms,
-                ),
+                channels=resnet_outer_channels[1:],
+                terms=polynomial_terms,
         )
         inner_types = make_fourier_field_types(
                 gspace=gspace, 
                 channels=resnet_inner_channels,
                 max_frequencies=max_frequency,
         )
-        initial_layer_factory = conv_layer
-        block_factory = partial(
-                make_escnn_example_block,
-                grid=grid_elements,
+        head_factory = sym_conv_layer
+        block_factories = multipartial[:,block_repeats](
+                toggle_pool(make_escnn_example_block),
+                mid_type=dim[0](*inner_types),
+                pool=put[:,0](True, False),
+                pool_factor=Dim[0](pool_factors),
+                ift_grid=ift_grid,
         )
 
     elif block_type == 'alpha':
@@ -518,26 +587,26 @@ def make_resnet(
         assert max_frequency > 0
         assert grid
 
-        outer_types = make_top_level_field_types(
+        outer_types = make_fourier_field_types(
                 gspace=gspace, 
-                channels=resnet_outer_channels,
-                make_nontrivial_field_types=partial(
-                    make_fourier_field_types,
-                    max_frequencies=max_frequency,
-                ),
+                channels=resnet_outer_channels[1:],
+                max_frequencies=max_frequency,
         )
         inner_types = make_fourier_field_types(
                 gspace=gspace, 
                 channels=resnet_inner_channels,
                 max_frequencies=max_frequency,
         )
-        initial_layer_factory = partial(
-                conv_bn_fourier_layer,
-                ift_grid=grid_elements,
+        head_factory = partial(
+                sym_conv_bn_fourier_layer,
+                ift_grid=ift_grid,
         )
-        block_factory = partial(
-                make_alpha_block,
-                grid=grid_elements,
+        block_factories = multipartial[:,block_repeats](
+                toggle_pool(make_alpha_block),
+                mid_type=dim[0](*inner_types),
+                pool=put[:,0](True, False),
+                pool_factor=Dim[0](pool_factors),
+                ift_grid=ift_grid,
         )
 
     elif block_type == 'beta':
@@ -547,14 +616,11 @@ def make_resnet(
 
         # Beta is closely modeled on the Wide ResNet architecture (WRN).
 
-        outer_types = make_top_level_field_types(
+        outer_types = make_exact_polynomial_field_types(
                 gspace=gspace, 
-                channels=resnet_outer_channels,
-                make_nontrivial_field_types=partial(
-                    make_exact_polynomial_field_types,
-                    terms=polynomial_terms,
-                    gated=True,
-                ),
+                channels=resnet_outer_channels[1:],
+                terms=polynomial_terms,
+                gated=True,
         )
         inner_types = make_exact_polynomial_field_types(
                 gspace=gspace,
@@ -562,29 +628,32 @@ def make_resnet(
                 terms=polynomial_terms,
                 gated=True,
         )
-        initial_layer_factory = conv_bn_gated_layer
-        block_factory = make_beta_block
+        head_factory = sym_conv_bn_gated_layer
+        block_factories = multipartial[:,block_repeats](
+                toggle_pool(make_beta_block),
+                mid_type=dim[0](*inner_types),
+                pool=put[:,0](True, False),
+                pool_factor=Dim[0](pool_factors),
+        )
 
     else:
         raise ValueError(f"unknown block type: {block_type}")
 
     if final_conv:
-        final_layer_factory = partial(
-                conv_layer,
+        tail_factory = partial(
+                sym_conv_layer,
                 kernel_size=final_conv,
         )
     else:
-        final_layer_factory = None
+        tail_factory = None
 
     encoder = SymViewPairEncoder(
-            ResNet(
-                outer_types=outer_types,
-                inner_types=inner_types,
-                initial_layer_factory=initial_layer_factory,
-                final_layer_factory=final_layer_factory,
-                block_factory=block_factory,
-                block_repeats=block_repeats,
-                pool_factors=pool_factors,
+            SymEncoder(
+                in_channels=resnet_outer_channels[0],
+                field_types=outer_types,
+                head_factory=head_factory,
+                block_factories=block_factories,
+                tail_factory=tail_factory,
             ),
     )
 
@@ -596,8 +665,8 @@ def make_resnet(
                     max_frequencies=max_frequency,
                 ),
                 layer_factory=partial(
-                    linear_fourier_layer,
-                    ift_grid=grid_elements,
+                    sym_linear_fourier_layer,
+                    ift_grid=ift_grid,
                 ),
                 logits_max_freq=max_frequency,
 
@@ -620,7 +689,7 @@ def make_resnet(
             classifier=classifier,
     )
 
-def make_densenet(
+def make_sym_densenet(
         *,
         transition_channels: list[int],
         growth_channels: int,
@@ -633,14 +702,15 @@ def make_densenet(
         mlp_channels: list[int],
         equivariant_mlp: bool = True,
 ):
-    from atompaint.encoders.densenet import DenseNet, make_fourier_growth_type
-    from atompaint.pooling import FourierExtremePool3D
+    from atompaint.encoders import SymEncoder
+    from atompaint.encoders.sym_densenet import (
+            SymDenseBlock, sym_gather_conv_pool_fourier_extreme_layer,
+    )
     from atompaint.utils import parse_so3_grid
-    from escnn.nn import FourierPointwise
 
     gspace = rot3dOnR3()
     so3 = gspace.fibergroup
-    grid_elements = parse_so3_grid(so3, grid)
+    ift_grid = parse_so3_grid(so3, grid)
 
     # Things that are hard-coded for now:
     #
@@ -654,51 +724,66 @@ def make_densenet(
     # - Dense layer nonlinearities: gated first, Fourier second.  It might 
     #   be better to use only one or the other, or even something else.
 
+    def dense_block(in_type, out_type, *, block_depth, pool_factor):
+        return SymDenseBlock(
+                in_type,
+                out_type,
+                concat_factories=multipartial[block_depth](concat_layer),
+                gather_factory=partial(
+                    sym_gather_conv_pool_fourier_extreme_layer,
+                    pool_factor=pool_factor,
+                    ift_grid=ift_grid,
+                    check_input_shape=False,
+                ),
+        )
+
+    def concat_layer(in_type):
+        mid_type, out_type = make_fourier_field_types(
+                gspace=gspace,
+                channels=[growth_channels * 4, growth_channels],
+                max_frequencies=max_frequency,
+        )
+        yield from sym_conv_bn_gated_layer(
+                in_type,
+                mid_type,
+                kernel_size=1,
+        )
+        yield from sym_conv_bn_fourier_layer(
+                mid_type,
+                out_type,
+                kernel_size=3,
+                padding=1,
+                function=NONLINEARITIES[fourier_nonlinearity],
+                ift_grid=ift_grid,
+        )
+
     if final_conv:
-        final_layer_factory = partial(
-                conv_layer,
+        tail_factory = partial(
+                sym_conv_layer,
                 kernel_size=final_conv,
         )
     else:
-        final_layer_factory = None
+        tail_factory = None
 
     encoder = SymViewPairEncoder(
-            DenseNet(
-                transition_types=make_top_level_field_types(
+            SymEncoder(
+                in_channels=transition_channels[0],
+                field_types=make_fourier_field_types(
                     gspace=gspace,
-                    channels=transition_channels,
-                    make_nontrivial_field_types=partial(
-                        make_fourier_field_types,
-                        max_frequencies=max_frequency,
-                        unpack=True,
-                    ),
-                ),
-                growth_type_factory=partial(
-                    make_fourier_growth_type,
-                    gspace=gspace,
-                    channels=growth_channels,
-                    max_frequency=max_frequency,
+                    channels=transition_channels[1:],
+                    max_frequencies=max_frequency,
                     unpack=True,
                 ),
-                initial_layer_factory=partial(
-                        conv_bn_fourier_layer,
-                        ift_grid=grid_elements,
+                head_factory=partial(
+                        sym_conv_bn_fourier_layer,
+                        ift_grid=ift_grid,
                 ),
-                final_layer_factory=final_layer_factory,
-                nonlin1_factory=gated_layer,
-                nonlin2_factory=partial(
-                    FourierPointwise,
-                    grid=grid_elements,
-                    function=NONLINEARITIES[fourier_nonlinearity],
+                block_factories=multipartial[:,1](
+                    dense_block,
+                    block_depth=Dim[0](block_depth),
+                    pool_factor=Dim[0](pool_factors),
                 ),
-                pool_factory=lambda in_type, pool_factor: \
-                        FourierExtremePool3D(
-                            in_type,
-                            grid=grid_elements,
-                            kernel_size=pool_factor,
-                        ),
-                pool_factors=pool_factors,
-                block_depth=block_depth,
+                tail_factory=tail_factory,
             ),
     )
 
@@ -710,8 +795,8 @@ def make_densenet(
                     max_frequencies=max_frequency,
                 ),
                 layer_factory=partial(
-                    linear_fourier_layer,
-                    ift_grid=grid_elements,
+                    sym_linear_fourier_layer,
+                    ift_grid=ift_grid,
                 ),
                 logits_max_freq=max_frequency,
 

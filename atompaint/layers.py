@@ -40,7 +40,7 @@ class Require1x1x1(nn.Module):
 
         return x
 
-def conv_layer(
+def sym_conv_layer(
         in_type: FieldType,
         out_type: FieldType,
         *,
@@ -56,7 +56,7 @@ def conv_layer(
             padding=padding,
     )
 
-def conv_bn_norm_layer(
+def sym_conv_bn_norm_layer(
         in_type: FieldType,
         out_type: FieldType,
         *,
@@ -81,7 +81,7 @@ def conv_bn_norm_layer(
     yield IIDBatchNorm3d(out_type)
     yield NormNonLinearity(out_type, function=function, bias=bias)
 
-def conv_bn_gated_layer(
+def sym_conv_bn_gated_layer(
         in_type: FieldType,
         out_type: FieldType,
         *,
@@ -102,7 +102,7 @@ def conv_bn_gated_layer(
     yield IIDBatchNorm3d(gate_type)
     yield GatedNonLinearity1(gate_type, function=function)
 
-def conv_bn_fourier_layer(
+def sym_conv_bn_fourier_layer(
         in_type: FieldType,
         out_type: FourierFieldType,
         *,
@@ -123,7 +123,7 @@ def conv_bn_fourier_layer(
     yield IIDBatchNorm3d(out_type)
     yield FourierPointwise(out_type, ift_grid, function=function)
 
-def linear_fourier_layer(
+def sym_linear_fourier_layer(
         in_type: FieldType,
         out_type: FourierFieldType,
         ift_grid: Grid,
@@ -141,11 +141,11 @@ def linear_fourier_layer(
     # I've seen some comments saying the batch norm and dropout don't work well 
     # together.
 
-def gated_layer(out_type, *, function=F.sigmoid):
+def sym_gated_layer(out_type, *, function=F.sigmoid):
     in_type = add_gates(out_type)
     return GatedNonLinearity1(in_type, function=function)
 
-def pool_conv_layer(in_type, *, padding=1):
+def sym_pool_conv_layer(in_type, *, padding=1):
     return R3Conv(
             in_type,
             in_type,
@@ -154,21 +154,21 @@ def pool_conv_layer(in_type, *, padding=1):
             padding=padding,
     )
 
-def pool_avg_layer(in_type):
+def sym_pool_avg_layer(in_type):
     return PointwiseAvgPoolAntialiased3D(
             in_type,
             sigma=0.6,
             stride=2,
     )
 
-def pool_fourier_avg_layer(in_type, ift_grid):
+def sym_pool_fourier_avg_layer(in_type, ift_grid):
     return FourierAvgPool3D(
             in_type,
             grid=ift_grid,
             stride=2,
     )
 
-def pool_fourier_extreme_layer(in_type, ift_grid, *, check_input_shape=True):
+def sym_pool_fourier_extreme_layer(in_type, ift_grid, *, check_input_shape=True):
     return FourierExtremePool3D(
             in_type,
             grid=ift_grid,
@@ -176,7 +176,7 @@ def pool_fourier_extreme_layer(in_type, ift_grid, *, check_input_shape=True):
             check_input_shape=check_input_shape,
     )
 
-def up_pool_fourier_extreme_layer(in_type, ift_grid):
+def sym_up_pool_fourier_extreme_layer(in_type, ift_grid):
     # To avoid edge effects, convolution layers need odd-sized inputs and 
     # Fourier pooling layers need even-sized ones.  One way to accommodate both 
     # is to upsample the input by one before pooling.

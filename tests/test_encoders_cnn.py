@@ -1,48 +1,75 @@
+import torch
+import torch.nn as nn
+import torchyield as ty
 
-from atompaint.encoders.cnn import IcosahedralCnn, FourierCnn
-from atompaint.vendored.escnn_nn_testing import check_equivariance
-from utils import *
+from atompaint.encoders import Encoder, SymEncoder
+from atompaint.layers import UnwrapTensor, sym_conv_bn_fourier_layer
+from atompaint.field_types import make_fourier_field_types
+from atompaint.vendored.escnn_nn_testing import (
+        check_equivariance, get_exact_3d_rotations,
+)
+from escnn.gspaces import rot3dOnR3
+from torchtest import assert_vars_change
+from functools import partial
 
-# For these tests, we construct the inputs very carefully to ensure that 
-# equivariance only reflects on the algorithms themselves, not artifacts.
+# Note that there's not an `atompaint.encoders.cnn` module.  This is because 
+# CNNs are simple enough that they can be created entirely with general-purpose 
+# blocks.
 
-# Important for output to be exactly right size, otherwise rotations will not 
-# be equivariant.
-
-def test_icosahedral_equivariance():
-    # Just use a single channel and the smallest possible fields of view.  
-    # That's enough to test equivariance, and keeps the test running fast by 
-    # not requiring too much memory.
-    module = IcosahedralCnn(
-            channels=[1,1,1],
-            conv_field_of_view=3,
-            pool_field_of_view=2,
+def test_asym_cnn():
+    cnn = Encoder(
+            channels=[6, 8, 16],
+            block_factories=partial(
+                ty.conv3_bn_relu_layer,
+                kernel_size=3,
+            ),
+            block_kwargs=('in_channels', 'out_channels'),
     )
 
-    c = module.fields[0].size
-    rots = get_exact_rotations(module.gspace.fibergroup)
+    x = torch.randn(1, 6, 6, 6, 6)
+    y = torch.randn(1, 16, 2, 2, 2)
 
-    # The input needs to be big enough that the input for each layer will be 
-    # bigger than the convolutional filter.
+    assert_vars_change(
+            model=cnn,
+            loss_fn=nn.MSELoss(),
+            optim=torch.optim.Adam(cnn.parameters()),
+            batch=(x, y),
+            device='cpu',
+    )
+
+def test_sym_cnn():
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    ift_grid = so3.grid('thomson_cube', N=4)
+
+    cnn = SymEncoder(
+            in_channels=6,
+            field_types=make_fourier_field_types(
+                gspace=gspace, 
+                channels=[1, 2],
+                max_frequencies=2,
+            ),
+            block_factories=partial(
+                sym_conv_bn_fourier_layer,
+                ift_grid=ift_grid,
+            ),
+    )
+
+    x = torch.randn(1, 6, 6, 6, 6)
+    y = torch.randn(1, 70, 2, 2, 2)
+
+    assert_vars_change(
+            model=nn.Sequential(cnn, UnwrapTensor()),
+            loss_fn=nn.MSELoss(),
+            optim=torch.optim.Adam(cnn.parameters()),
+            batch=(x, y),
+            device='cpu',
+    )
+
     check_equivariance(
-        module,
-        in_tensor=(1, c, 30, 30, 30),
-        group_elements=rots,
-        atol=1e-4,
-    )
-
-def test_fourier_equivariance():
-    module = FourierCnn(
-            channels=[1,1,1],
-            conv_field_of_view=3,
-    )
-
-    c = module.fields[0].size
-    rots = get_exact_rotations(module.gspace.fibergroup)
-
-    check_equivariance(
-        module,
-        in_tensor=(1, c, 23, 23, 23),
-        group_elements=rots,
+        cnn,
+        in_tensor=x,
+        out_shape=y.shape,
+        group_elements=get_exact_3d_rotations(so3),
         atol=1e-4,
     )

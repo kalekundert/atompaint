@@ -5,7 +5,7 @@ import parametrize_from_file as pff
 import pytest
 
 from atompaint.time_embedding import SinusoidalEmbedding
-from atompaint.utils import partial_grid
+from multipartial import multipartial
 from torchtest import assert_vars_change
 from test_time_embedding import ModuleWrapper, InputWrapper
 
@@ -81,7 +81,7 @@ def test_asym_unet(skip_algorithm):
             channels=[1, 2, 3, 4],
             head_factory=head_factory,
             tail_factory=tail_factory,
-            block_factories=partial_grid(cols=2)(block_factory),
+            block_factories=multipartial[1,2](block_factory),
             latent_factory=latent_factory,
             downsample_factory=downsample_factory,
             upsample_factory=upsample_factory,
