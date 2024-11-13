@@ -38,6 +38,7 @@ class Encoder(ty.FrozenSequential):
             tail_factory: Optional[LayerFactory] = None,
             block_factories: list[list[LayerFactory]],
             block_kwargs: Optional[tuple[str, str]] = None,
+            verbose: bool = False,
     ):
         """
         Arguments:
@@ -98,10 +99,39 @@ class Encoder(ty.FrozenSequential):
             if tail_factory:
                 yield from ty.modules_from_layers(tail)
 
-        super().__init__(iter_layers())
+        layers = iter_layers()
+
+        if verbose:
+            layers = ty.verbose(layers)
+
+        super().__init__(layers)
 
 class Decoder(Encoder):
-    pass
+
+    def __init__(
+            self,
+            *,
+            channels,
+            channel_schedule: ChannelSchedule = late_schedule,
+            head_factory: Optional[LayerFactory] = None,
+            tail_factory: Optional[LayerFactory] = None,
+            block_factories: list[list[LayerFactory]],
+            block_kwargs: Optional[tuple[str, str]] = None,
+            verbose: bool = False,
+    ):
+        # This is a very thin wrapper around `Encoder`, which really is 
+        # flexible enough to be both an encoder and a decoder.  The only 
+        # difference is that the default channel schedule changes from early to 
+        # late.
+        super().__init__(
+                channels=channels,
+                channel_schedule=channel_schedule,
+                head_factory=head_factory,
+                tail_factory=tail_factory,
+                block_factories=block_factories,
+                block_kwargs=block_kwargs,
+                verbose=verbose,
+        )
 
 class SymEncoder(Encoder):
     """
@@ -118,6 +148,7 @@ class SymEncoder(Encoder):
             block_factories: list[list[LayerFactory]],
             block_kwargs: Optional[tuple[str, str]] = None,
             channel_schedule: ChannelSchedule = early_schedule,
+            verbose: bool = False,
     ):
         field_types = list(field_types)
         gspace = field_types[0].gspace
@@ -132,6 +163,7 @@ class SymEncoder(Encoder):
                 tail_factory=tail_factory,
                 block_factories=block_factories,
                 block_kwargs=block_kwargs,
+                verbose=verbose,
         )
 
     def forward(self, x: Tensor) -> GeometricTensor:
@@ -151,7 +183,9 @@ class SymDecoder(Decoder):
             head_factory: Optional[LayerFactory] = None,
             tail_factory: Optional[LayerFactory] = None,
             block_factories: list[list[LayerFactory]],
-            channel_schedule: ChannelSchedule = early_schedule,
+            block_kwargs: Optional[tuple[str, str]] = None,
+            channel_schedule: ChannelSchedule = late_schedule,
+            verbose: bool = False,
     ):
         field_types = list(field_types)
         gspace = field_types[0].gspace
@@ -165,6 +199,8 @@ class SymDecoder(Decoder):
                 head_factory=head_factory,
                 tail_factory=tail_factory,
                 block_factories=block_factories,
+                block_kwargs=block_kwargs,
+                verbose=verbose,
         )
 
     def forward(self, x: GeometricTensor) -> Tensor:

@@ -48,6 +48,8 @@ def test_fourier_avg_pool_3d_equivariance():
 
 @pytest.mark.xfail
 def test_extreme_pool_2d():
+    from atompaint.pooling import ExtremePool2D
+
     f = ExtremePool2D(2)
     x = torch.Tensor([
         [ 1,  4,  2,  2],
@@ -185,4 +187,5 @@ def test_extreme_pool_3d():
     ])
 
     torch.testing.assert_close(y, y_expected)
+
 

@@ -6,6 +6,32 @@ from torchyield import Layer
 
 class ResBlock(Module):
 
+    def __init__(
+            self,
+            *,
+            conv1,
+            bn1,
+            act1,
+            conv2,
+            bn2,
+            act2,
+            resize,
+            resize_before_conv,
+            skip,
+            activation_before_skip,
+    ):
+        super().__init__()
+        self.conv1 = conv1
+        self.bn1 = bn1
+        self.act1 = act1
+        self.conv2 = conv2
+        self.bn2 = bn2
+        self.act2 = act2
+        self.resize = resize
+        self.resize_before_conv = resize_before_conv
+        self.skip = skip
+        self.activation_before_skip = activation_before_skip
+
     def forward(self, x):
         if self.resize_before_conv:
             x = self.resize(x)
@@ -23,10 +49,7 @@ class ResBlock(Module):
         if not self.resize_before_conv:
             x = self.resize(x)
 
-        if self.skip is not None:
-            x = self.skip(x)
-
-        z = x + y
+        z = self.skip(x) + y
 
         if not self.activation_before_skip:
             z = self.act2(z)

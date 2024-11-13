@@ -54,8 +54,6 @@ class SymResBlock(ResBlock):
             batch_norm: bool = True,
             skip_factory: ConvFactory = conv1x1x1,
     ):
-        super().__init__()
-
         assert resize_before_conv or in_stride or out_stride
 
         self.in_type = in_type
@@ -68,35 +66,38 @@ class SymResBlock(ResBlock):
         if not activation_before_skip:
             assert out_activation.in_type == out_type
 
-        self.conv1 = R3Conv(
-                in_type,
-                mid_type_1,
-                kernel_size=3,
-                stride=in_stride,
-                padding=in_padding,
-                bias=not batch_norm,
-        )
-        self.bn1 = IIDBatchNorm3d(mid_type_1) if batch_norm else identity
-        self.act1 = in_activation
-        self.conv2 = R3Conv(
-                mid_type_2,
-                mid_type_3,
-                kernel_size=3,
-                stride=out_stride,
-                padding=out_padding,
-                bias=not batch_norm,
-        )
-        self.bn2 = IIDBatchNorm3d(mid_type_3) if batch_norm else identity
-        self.act2 = out_activation
-        self.resize = resize if resize is not None else identity
-        self.resize_before_conv = resize_before_conv
-        self.activation_before_skip = activation_before_skip
-
         if in_type == out_type:
-            self.skip = identity
+            skip = identity
         else:
-            self.skip = skip_factory(in_type, out_type)
-            assert self.skip.out_type == out_type
+            skip = skip_factory(in_type, out_type)
+            assert skip.out_type == out_type
+
+        super().__init__(
+                conv1=R3Conv(
+                    in_type,
+                    mid_type_1,
+                    kernel_size=3,
+                    stride=in_stride,
+                    padding=in_padding,
+                    bias=not batch_norm,
+                ),
+                bn1=IIDBatchNorm3d(mid_type_1) if batch_norm else identity,
+                act1=in_activation,
+                conv2=R3Conv(
+                    mid_type_2,
+                    mid_type_3,
+                    kernel_size=3,
+                    stride=out_stride,
+                    padding=out_padding,
+                    bias=not batch_norm,
+                ),
+                bn2=IIDBatchNorm3d(mid_type_3) if batch_norm else identity,
+                act2=out_activation,
+                resize=resize if resize is not None else identity,
+                resize_before_conv=resize_before_conv,
+                skip=skip,
+                activation_before_skip=activation_before_skip,
+        )
 
     def forward(self, x: GeometricTensor) -> GeometricTensor:
         assert x.type == self.in_type

@@ -14,6 +14,10 @@ from atompaint.type_hints import Grid
 from torchyield import LayerFactory
 
 class SymDenseBlock(Module):
+    """
+    A block that implements the core functionality of a DenseNet, i.e. 
+    successively concatenating channels to the latent representation.
+    """
 
     def __init__(
             self,
@@ -28,8 +32,8 @@ class SymDenseBlock(Module):
             concat_factories:
                 - list of factories
                 - arguments: input type
-                - output type can be anything, but must be available via 
-                  `out_type` attribute; will become input type for next layer
+                - output type can be anything, will be concatenated to input 
+                  tensor.
                 - Typical: convolution, batch norm, activation
 
             gather_factory:

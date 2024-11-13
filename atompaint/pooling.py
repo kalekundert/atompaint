@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from escnn.nn import (
@@ -12,8 +13,10 @@ from escnn.nn.modules.pooling.gaussian_blur import (
 )
 from escnn.nn.modules.pooling.pointwise import check_dimensions
 from escnn.group import GroupElement
+from pipeline_func import f
 
 from typing import Optional, Union, List
+from torch import Tensor
 
 class FourierExtremePool3D(torch.nn.Module):
     """
@@ -203,3 +206,87 @@ class ExtremePool3D(torch.nn.Module):
 
         y = y.view(*i.shape)
         return y
+
+class AntialiasedPool3D(torch.nn.Module):
+
+    def __init__(
+            self,
+            *,
+            pool_factory,
+            kernel_size: Union[int, tuple[int, int, int]],
+            stride: Optional[int] = None,
+            padding: int = 0,
+            sigma: float = 0.6,
+            check_input_shape: bool = True,
+    ):
+        super().__init__()
+
+        self.pool = pool_factory(
+                kernel_size=kernel_size,
+                stride=1,
+                padding=padding,
+        )
+        self.blur = GaussianBlurND(
+                sigma=sigma,
+                kernel_size=kernel_size_from_radius(sigma * 4),
+                stride=stride if stride is not None else kernel_size,
+                rel_padding=padding,
+                edge_correction=True,
+                d=3,
+        )
+        self.check_input_shape = check_input_shape
+
+    def forward(self, x: Tensor) -> Tensor:
+        w, h, d = x.shape[-3:]
+        assert w == h == d
+        if self.check_input_shape:
+            assert (w - self.pool.kernel_size) % self.blur.stride == 0
+
+        return (
+                x
+                | f(self.pool)
+                | f(self.blur)
+        )
+
+class AntialiasedMaxPool3D(AntialiasedPool3D):
+
+    def __init__(
+            self,
+            *,
+            kernel_size: Union[int, tuple[int, int, int]],
+            stride: Optional[int] = None,
+            padding: int = 0,
+            sigma: float = 0.6,
+            check_input_shape: bool = True,
+    ):
+        super().__init__(
+                self,
+                pool_factory=nn.MaxPool3d,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                sigma=sigma,
+                check_input_shape=check_input_shape,
+        )
+
+class AntialiasedAvgPool3D(AntialiasedPool3D):
+
+    def __init__(
+            self,
+            *,
+            kernel_size: Union[int, tuple[int, int, int]],
+            stride: Optional[int] = None,
+            padding: int = 0,
+            sigma: float = 0.6,
+            check_input_shape: bool = True,
+    ):
+        super().__init__(
+                self,
+                pool_factory=nn.AvgPool3d,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                sigma=sigma,
+                check_input_shape=check_input_shape,
+        )
+

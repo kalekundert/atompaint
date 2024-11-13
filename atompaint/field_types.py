@@ -61,6 +61,10 @@ def make_fourier_field_types(gspace, channels, max_frequencies, **kwargs):
         bl_irreps = group.bl_irreps(max_freq)
         yield FourierFieldType(gspace, channels_i, bl_irreps, **kwargs)
 
+def make_fourier_field_type(gspace, channels, max_frequency, **kwargs):
+    bl_irreps = gspace.fibergroup.bl_irreps(max_frequency)
+    yield FourierFieldType(gspace, channels, bl_irreps, **kwargs)
+
 def make_polynomial_field_types(gspace, channels, terms):
     for i, channels_i in enumerate(channels):
         terms_i = get_scalar(terms, i)

@@ -126,7 +126,7 @@ class BatchGenerator:
         ...     np.random.default_rng(0),
         ...     np.random.default_rng(1),
         ... ])
-        >>> bg.uniform
+        >>> bg.uniform()
         tensor([0.6370, 0.5118], dtype=torch.float64)
 
     This class is meant to facilitate the idea that all of the randomness in 
