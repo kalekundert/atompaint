@@ -71,22 +71,27 @@ class FrechetNeighborLocDistance(Metric):
         self.add_state(
                 name='mean',
                 default=torch.zeros(c, dtype=dtype),
+                dist_reduce_fx='sum',
         )
         self.add_state(
                 name='mean_err',
                 default=torch.zeros(c, dtype=dtype),
+                dist_reduce_fx='sum',
         )
         self.add_state(
                 name='ncov',
                 default=torch.zeros((c, c), dtype=dtype),
+                dist_reduce_fx='sum',
         )
         self.add_state(
                 name='ncov_err',
                 default=torch.zeros((c, c), dtype=dtype),
+                dist_reduce_fx='sum',
         )
         self.add_state(
                 name='n',
                 default=torch.tensor(0, dtype=int64),
+                dist_reduce_fx='sum',
         )
 
         self.register_buffer(
