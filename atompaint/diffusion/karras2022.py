@@ -83,12 +83,12 @@ class KarrasDiffusion(L.LightningModule):
 
     def training_step(self, x):
         loss = self.forward(x)
-        self.log('train/loss', loss, on_epoch=True)
+        self.log('train/loss', loss, on_epoch=True, sync_dist=True)
         return loss
 
     def validation_step(self, x):
         loss = self.forward(x)
-        self.log('val/loss', loss, on_epoch=True)
+        self.log('val/loss', loss, on_epoch=True, sync_dist=True)
         return loss
 
     def on_validation_epoch_end(self):
@@ -113,12 +113,12 @@ class KarrasDiffusion(L.LightningModule):
                 metric.update(x)
 
         for name, metric in self.gen_metrics.items():
-            self.log(f'gen/{name}', metric.compute())
+            self.log(f'gen/{name}', metric.compute(), sync_dist=True)
             metric.reset()
 
     def test_step(self, x):
         loss = self.forward(x)
-        self.log('test/loss', loss, on_epoch=True)
+        self.log('test/loss', loss, on_epoch=True, sync_dist=True)
         return loss
 
 class KarrasPrecond(nn.Module):
