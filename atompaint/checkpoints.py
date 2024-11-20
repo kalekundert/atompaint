@@ -63,7 +63,7 @@ def load_model_weights(
         if xxh32sum != actual_xxh32sum:
             raise RuntimeError(f"weights file has the wrong hash\n• path: {ckpt_path}\n• expected xxh32sum: {xxh32sum}\n• actual xxh32sum: {actual_xxh32sum}")
 
-    ckpt = torch.load(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     weights = extract_state_dict(ckpt['state_dict'], fix_keys=fix_keys)
 
     if mode == 'eval':

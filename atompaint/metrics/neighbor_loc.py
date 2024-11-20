@@ -159,6 +159,7 @@ class FrechetNeighborLocDistance(Metric):
         ref_stats = torch.load(
                 ref_path,
                 map_location=self.mean.device,
+                weights_only=True,
         )
 
         def materialize(buffer, x):
