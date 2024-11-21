@@ -75,9 +75,11 @@ class UNetBlock(Module):
             try:
                 sig.bind(x)
             except TypeError:
-                x = f(x, t)
+                args = x, t
             else:
-                x = f(x)
+                args = x,
+
+            x = f(*args)
 
         return x
 
