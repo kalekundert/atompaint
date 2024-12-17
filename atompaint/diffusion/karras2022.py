@@ -38,6 +38,7 @@ class KarrasDiffusion(L.LightningModule):
             opt_factory: OptFactory,
             gen_params: Optional[GenerateParams] = None,
             frechet_ref_path: str | Path,
+            skip_gen_metrics: bool = False,
     ):
         super().__init__()
 
@@ -54,6 +55,8 @@ class KarrasDiffusion(L.LightningModule):
                 'frechet_dist': FrechetNeighborLocDistance(),
         }
         self.gen_metrics['frechet_dist'].load_reference_stats(frechet_ref_path)
+
+        self.skip_gen_metrics = skip_gen_metrics
 
         # [Karras2022], Table 1.  This mean and standard deviation should lead 
         # to σ values in roughly the range [1.9e-3, 5.4e2].
@@ -92,6 +95,9 @@ class KarrasDiffusion(L.LightningModule):
         return loss
 
     def on_validation_epoch_end(self):
+        if self.skip_gen_metrics:
+            return
+
         # Lightning takes care of putting the model in eval-mode and disabling 
         # gradients before this hook is invoked [1], so we don't need to do 
         # that ourselves.
