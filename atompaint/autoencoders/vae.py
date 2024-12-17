@@ -81,7 +81,7 @@ class VariationalAutoencoder(L.LightningModule):
         img_pred = self.decoder(latent)
 
         loss = VaeLoss(
-                data=F.mse_loss(img, img_pred),
+                data=F.mse_loss(img, img_pred, reduction='sum'),
                 prior=kl_divergence_vs_std_normal(mean, std),
                 beta=1,
         )
