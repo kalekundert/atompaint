@@ -105,7 +105,7 @@ class KarrasDiffusion(L.LightningModule):
 
         rng = np.random.default_rng(0)
 
-        for i in trange(32, desc="Generative metrics", file=sys.stdout):
+        for i in trange(32, desc="Generative metrics", leave=True, file=sys.stdout):
             x = generate(rng, self.model, self.gen_params)
 
             for metric in self.gen_metrics.values():
