@@ -1,6 +1,7 @@
 import torch.nn as nn
 
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
+from atompaint.conditioning import ConditionedModel
 from atompaint.upsampling import R3Upsampling
 from atompaint.field_types import make_trivial_field_type
 from escnn.nn import (
@@ -16,9 +17,9 @@ from torch import Tensor
 from torchyield import LayerFactory
 from escnn.nn import FieldType
 from collections.abc import Iterable
-from typing import Literal
+from typing import Literal, Optional
 
-class SymUNet(UNet):
+class SymUNet(ConditionedModel):
 
     def __init__(
             self,
@@ -31,9 +32,11 @@ class SymUNet(UNet):
             latent_factory: LayerFactory,
             downsample_factory: LayerFactory,
             upsample_factory: LayerFactory,
-            time_dim: int,
-            time_factory: LayerFactory,
             skip_algorithm: Literal['cat', 'add'] = 'cat',
+            cond_dim: int,
+            noise_embedding: LayerFactory,
+            label_embedding: Optional[LayerFactory] = None,
+            allow_self_cond: bool = False,
     ):
         field_types = list(field_types)
         block_factories = require_grid(
@@ -41,8 +44,9 @@ class SymUNet(UNet):
                 rows=len(field_types) - 1,
         )
         gspace = field_types[0].gspace
+        in_channels = img_channels * (2 if allow_self_cond else 1)
 
-        self.in_type = one(make_trivial_field_type(gspace, img_channels))
+        self.in_type = one(make_trivial_field_type(gspace, in_channels))
         self.out_type = self.in_type
         self.img_channels = img_channels
 
@@ -64,7 +68,7 @@ class SymUNet(UNet):
                     encoder = factory(
                             in_type=in_type if is_first_j else out_type,
                             out_type=out_type,
-                            time_dim=time_dim,
+                            cond_dim=cond_dim,
                     )
                     yield PushSkip.from_layers(encoder)
 
@@ -73,7 +77,7 @@ class SymUNet(UNet):
 
             latent = latent_factory(
                     in_type=out_type,
-                    time_dim=time_dim,
+                    cond_dim=cond_dim,
             )
             yield NoSkip.from_layers(latent)
 
@@ -87,7 +91,7 @@ class SymUNet(UNet):
                     decoder = factory(
                             in_type=PopSkip.adjust_in_channels(in_type),
                             out_type=in_type if not is_last_j else out_type,
-                            time_dim=time_dim,
+                            cond_dim=cond_dim,
                     )
                     yield PopSkip.from_layers(decoder)
 
@@ -112,15 +116,18 @@ class SymUNet(UNet):
                 yield *in_out_type, block_factories_i
             
         super().__init__(
-                blocks=iter_unet_blocks(),
-                time_embedding=time_factory(time_dim),
+                model=UNet(iter_unet_blocks()),
+                noise_embedding=noise_embedding(cond_dim),
+                label_embedding=label_embedding and label_embedding(cond_dim),
+                allow_self_cond=allow_self_cond,
         )
 
-    def forward(self, x: Tensor, t: Tensor) -> Tensor:
-        x_hat = GeometricTensor(x, self.in_type)
-        y_hat = super().forward(x_hat, t)
-        assert y_hat.type == self.out_type
-        return y_hat.tensor
+    def wrap_input(self, x: Tensor) -> GeometricTensor:
+        return GeometricTensor(x, self.in_type)
+
+    def unwrap_output(self, x: GeometricTensor) -> Tensor:
+        assert x.type == self.out_type
+        return x.tensor
 
 class SymUNetBlock(nn.Module):
     """
@@ -132,19 +139,19 @@ class SymUNetBlock(nn.Module):
             self,
             in_type,
             *,
-            size_algorithm: Literal['padded-conv', 'upsample', 'transposed-conv'] = 'padded-conv',
-            time_activation: nn.Module,
+            cond_activation: nn.Module,
             out_activation: nn.Module,
+            size_algorithm: Literal['padded-conv', 'upsample', 'transposed-conv'] = 'padded-conv',
     ):
         """
         Arguments:
-            time_activation:
-                A module that will integrate a time embedding into the main 
-                image representation, and then apply some sort of nonlinearity.  
+            cond_activation:
+                A module that will integrate a condition into the main image 
+                representation, and then apply some sort of nonlinearity.  
                 This module's `forward()` method should have the following 
                 signature:
 
-                    forward(x: GeometricTensor, t: Tensor)
+                    forward(x: GeometricTensor, y: Tensor)
 
                 Where the inputs have the following dimensions:
 
@@ -153,25 +160,38 @@ class SymUNetBlock(nn.Module):
                         C: channels
                         W, H, D: spatial dimensions (all equal)
 
-                    t: (B, T)
+                    y: (B, E)
                         B: batch size
-                        T: time embedding size
+                        E: embedding size
+            
+            out_activation:
+                The activation to apply at the end of the block, i.e. after the 
+                second convolution.
 
-            padded_conv:
-                The output of this block must be the same shape as the input.  
-                If *padded_conv* is true, this is accomplished using padded 
-                convolutions.  This how most ResNet-style architectures work, 
-                but one possible downside is that this allows the model to 
-                detect the edges of the input, which in turns allows the model 
-                to break equivariance.  Therefore, if *padded_conv* is False, 
-                only unpadded convolutions are used, and a linear interpolation 
-                step is added to restore the input size.
+            size_algorithm:
+                The means by which the output of this block is kept the same 
+                shape as the input:
+
+                `'padded-conv'`:
+                    Pad all convolutions such that their output is the same 
+                    shape as their input.  This how almost all ResNet-style 
+                    architectures work, but one possible downside is that this 
+                    allows the model to detect the edges of the input, which in 
+                    turns allows the model to break equivariance.  
+
+                `'upsample'`:
+                    Use unpadded convolutions, then include a linear 
+                    interpolation step at the end to restore the input shape.
+
+                `'transposed-conv'`:
+                    Use a transposed convolution followed by a regular 
+                    convolution, instead of two regular convolutions.
         """
         super().__init__()
 
         self.in_type = in_type
-        mid_type_1 = time_activation.in_type
-        mid_type_2 = time_activation.out_type
+        mid_type_1 = cond_activation.in_type
+        mid_type_2 = cond_activation.out_type
         mid_type_3 = out_activation.in_type
         self.out_type = out_type = out_activation.out_type
 
@@ -222,7 +242,7 @@ class SymUNetBlock(nn.Module):
         self.bn1 = IIDBatchNorm3d(mid_type_1)
         self.bn2 = IIDBatchNorm3d(mid_type_3)
 
-        self.act1 = time_activation
+        self.act1 = cond_activation
         self.act2 = out_activation
 
         if in_type == out_type:
@@ -240,16 +260,17 @@ class SymUNetBlock(nn.Module):
                     IIDBatchNorm3d(out_type),
             )
 
-    def forward(self, x: GeometricTensor, t: Tensor):
+    def forward(self, x: GeometricTensor, y: Tensor):
         *_, w, h, d = x.shape
         assert w == h == d
         assert w >= self.min_input_size
+        assert x.type == self.in_type
 
         x_conv = (
                 x
                 | f(self.conv1)
                 | f(self.bn1)
-                | f(self.act1, t)
+                | f(self.act1, y)
                 | f(self.conv2)
                 | f(self.bn2)
                 | f(self.act2)

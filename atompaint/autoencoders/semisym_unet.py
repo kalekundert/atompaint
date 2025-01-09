@@ -1,15 +1,16 @@
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
+from atompaint.conditioning import ConditionedModel
 from atompaint.field_types import make_trivial_field_type
 from torch import Tensor
 from escnn.nn import GeometricTensor
 from more_itertools import one, pairwise, mark_ends
 from multipartial import require_grid
 
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Optional
 from torchyield import LayerFactory
 from escnn.nn import FieldType
 
-class SemiSymUNet(UNet):
+class SemiSymUNet(ConditionedModel):
 
     def __init__(
             self,
@@ -23,9 +24,11 @@ class SemiSymUNet(UNet):
             latent_factory: LayerFactory,
             downsample_factory: LayerFactory,
             upsample_factory: LayerFactory,
-            time_dim: int,
-            time_factory: LayerFactory,
             skip_algorithm: Literal['cat', 'add'] = 'cat',
+            cond_dim: int,
+            noise_embedding: LayerFactory,
+            label_embedding: Optional[LayerFactory] = None,
+            allow_self_cond: bool = False,
     ):
         """
         Construct a U-Net with an equivariant encoder and a non-equivariant 
@@ -83,7 +86,7 @@ class SemiSymUNet(UNet):
                             *,
                             in_type: escnn.nn.FieldType,
                             out_type: escnn.nn.FieldType,
-                            time_dim: int,
+                            cond_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
             decoder_factories:
@@ -99,7 +102,7 @@ class SemiSymUNet(UNet):
                             *,
                             in_channels: int,
                             out_channels: int,
-                            time_dim: int,
+                            cond_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
             latent_factory:
@@ -138,26 +141,26 @@ class SemiSymUNet(UNet):
                             channels: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
-            time_dim:
-                The dimension of the time embedding that will be passed to the 
-                `forward()` method.  The purpose of the time embedding is to 
-                inform the model about the amount of noise present in the 
-                input.
+            cond_dim:
+                The dimension of the condition embedding that will be passed to the 
+                `forward()` method.  The purpose of this embedding is to inform 
+                the model about the amount of noise present in the input.
 
-            time_factory:
+            noise_embedding:
                 A function than can be used to instantiate one or more 
                 non-equivariant modules that will be used to make a latent 
-                embedding of the time vectors that will be shared between each 
-                encoder/decoder block of the U-Net.  Typically this is a 
-                shallow MLP.  It is also typical for each encoder/decoder block 
-                to pass this embedding through another shallow MLP before 
-                incorporating it into the main latent representation of the 
-                image, but how/if this is done is up to the encoder/decoder 
-                factories.  This factory should have the following signature:
+                embedding of the noise level of the current diffusion step.
+                This embedding will be shared between each encoder/decoder 
+                block of the U-Net.  Typically, this is a shallow MLP.  It is 
+                also typical for each encoder/decoder block to pass this 
+                embedding through another shallow MLP before incorporating it 
+                into the main latent representation of the image, but how/if 
+                this is done is up to the encoder/decoder factories.  This 
+                factory should have the following signature:
 
-                    time_factory(
+                    noise_embedding(
                             *,
-                            time_dim: int,
+                            cond_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
         """
         encoder_types = list(encoder_types)
@@ -192,7 +195,7 @@ class SemiSymUNet(UNet):
                     encoder = factory(
                             in_type=in_type if is_first_j else out_type,
                             out_type=out_type,
-                            time_dim=time_dim,
+                            cond_dim=cond_dim,
                     )
                     yield PushSkip.from_layers(encoder)
 
@@ -201,7 +204,7 @@ class SemiSymUNet(UNet):
 
             latent = latent_factory(
                     in_type=out_type,
-                    time_dim=time_dim,
+                    cond_dim=cond_dim,
             )
             yield NoSkip.from_layers(latent)
 
@@ -215,7 +218,7 @@ class SemiSymUNet(UNet):
                     decoder = factory(
                             in_channels=PopSkip.adjust_in_channels(in_channels),
                             out_channels=in_channels if not is_last_j else out_channels,
-                            time_dim=time_dim,
+                            cond_dim=cond_dim,
                     )
                     yield PopSkip.from_layers(decoder)
 
@@ -244,11 +247,12 @@ class SemiSymUNet(UNet):
                 yield in_type.size, out_type.size, decoder_factories_i
 
         super().__init__(
-                blocks=iter_unet_blocks(),
-                time_embedding=time_factory(time_dim),
+                model=UNet(iter_unet_blocks()),
+                noise_embedding=noise_embedding(cond_dim),
+                label_embedding=label_embedding and label_embedding(cond_dim),
+                allow_self_cond=allow_self_cond,
         )
 
-    def forward(self, x: Tensor, t: Tensor) -> Tensor:
-        x_hat = GeometricTensor(x, self.in_type)
-        return super().forward(x_hat, t)
+    def wrap_input(self, x: Tensor) -> GeometricTensor:
+        return GeometricTensor(x, self.in_type)
 

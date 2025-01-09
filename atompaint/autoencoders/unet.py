@@ -3,8 +3,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torchyield as ty
-import inspect
 
+from atompaint.conditioning import forward_with_condition
 from torch import Tensor
 from torch.nn import Module
 from escnn.nn import GeometricTensor, tensor_directsum
@@ -13,22 +13,23 @@ from typing import Iterable
 
 class UNet(Module):
 
-    def __init__(
-            self,
-            blocks: Iterable[UNetBlock],
-            time_embedding: ty.Layer,
-    ):
+    def __init__(self, blocks: Iterable[UNetBlock]):
         super().__init__()
-        self.blocks = nn.ModuleList(blocks)
-        self.time_embedding = ty.module_from_layers(time_embedding)
+        for i, block in enumerate(blocks):
+            self.add_module(str(i), block)
 
-    def forward(self, x: Tensor, t: Tensor) -> Tensor:
-        t = self.time_embedding(t)
+    def forward(self, x, y):
+        """
+        Arguments:
+            x: The input image.
+            y: The conditioning signal.
 
+        Note that *x* may be a `Tensor` or a `GeometricTensor`.
+        """
         skips = []
 
-        for block in self.blocks:
-            x = block(x, t, skips=skips)
+        for block in self.children():
+            x = block(x, y, skips=skips)
 
         assert not skips
 
@@ -51,45 +52,27 @@ class UNetBlock(Module):
         super().__init__()
         self.wrappees = nn.ModuleList(wrappees)
 
-    def forward(self, x, t, *, skips):
+    def forward(self, x, y, *, skips):
         raise NotImplementedError
 
-    def _forward(self, x, t):
-        # Some modules have only one input (x), while others have two (x, t).  
-        # In the future, if I implement self-conditioning, this might get even 
-        # more complicated.  I want to keep the simple API that allows users to 
-        # yield modules with different inputs, but unfortunately I think that 
-        # requires this somewhat messy code to inspect the module signatures in 
-        # order to call them with the right arguments.
+    def _forward(self, x, y):
+        # I want `UNetBlock` to accept layers that take both one input (x) and 
+        # two (x, y).  That is, layers that ignore the conditioning signal and 
+        # layers that don't.  This simplifies the API for end-users, since it 
+        # allows them to mix-and-match layers regardless of their inputs.
 
-        for f in self.wrappees:
-            # `torch.nn.Module.__call__()` accepts `*args` and `**kwargs`, so 
-            # we need to inspect `forward()` instead.
-            sig = inspect.signature(f.forward)
-
-            # Some modules, for example `ConvTranspose3d`, accept an optional 
-            # second argument.  We don't want to pass the `t` input to these 
-            # modules.  This is why we first check to see if we can invoke the 
-            # module with only one argument, and provide the second only if 
-            # necessary.
-            try:
-                sig.bind(x)
-            except TypeError:
-                args = x, t
-            else:
-                args = x,
-
-            x = f(*args)
+        for wrappee in self.wrappees:
+            x = forward_with_condition(wrappee, x, y)
 
         return x
 
 
 class PushSkip(UNetBlock):
 
-    def forward(self, x, t, *, skips):
-        y = self._forward(x, t)
-        skips.append(y)
-        return y
+    def forward(self, x, y, *, skips):
+        skip = self._forward(x, y)
+        skips.append(skip)
+        return skip
 
 class PopAddSkip(UNetBlock):
 
@@ -97,7 +80,7 @@ class PopAddSkip(UNetBlock):
     def adjust_in_channels(in_channels):
         return in_channels
 
-    def forward(self, x, t, *, skips):
+    def forward(self, x, y, *, skips):
         x_orig = skips.pop()
 
         # If `x` and `x_orig` are the both same type (either `Tensor` or 
@@ -117,7 +100,7 @@ class PopAddSkip(UNetBlock):
         else:
             raise AssertionError
 
-        return self._forward(x_skip, t)
+        return self._forward(x_skip, y)
 
 class PopCatSkip(UNetBlock):
 
@@ -127,7 +110,7 @@ class PopCatSkip(UNetBlock):
         # given a `escnn.nn.FieldType`.
         return in_channels + in_channels
 
-    def forward(self, x, t, *, skips):
+    def forward(self, x, y, *, skips):
         x_orig = skips.pop()
 
         if _types(x_orig, x) == (GeometricTensor, GeometricTensor):
@@ -142,12 +125,12 @@ class PopCatSkip(UNetBlock):
         else:
             raise AssertionError
 
-        return self._forward(x_skip, t)
+        return self._forward(x_skip, y)
 
 class NoSkip(UNetBlock):
 
-    def forward(self, x, t, *, skips):
-        return self._forward(x, t)
+    def forward(self, x, y, *, skips):
+        return self._forward(x, y)
 
 POP_SKIP_CLASSES = dict(
         cat=PopCatSkip,

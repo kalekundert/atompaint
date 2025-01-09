@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch.nn as nn
 
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
-from atompaint.time_embedding import AddTimeToImage
+from atompaint.conditioning import ConditionedModel, AddConditionToImage
 from atompaint.upsampling import Upsample3d
 from einops import rearrange
 from more_itertools import pairwise
@@ -11,10 +11,10 @@ from pipeline_func import f
 from more_itertools import mark_ends
 from multipartial import require_grid
 
-from typing import Literal, Callable
+from typing import Literal, Callable, Optional
 from torchyield import LayerFactory
 
-class AsymUNet(UNet):
+class AsymUNet(ConditionedModel):
 
     def __init__(
             self,
@@ -26,9 +26,11 @@ class AsymUNet(UNet):
             latent_factory: LayerFactory,
             downsample_factory: LayerFactory,
             upsample_factory: LayerFactory,
-            time_dim: int,
-            time_factory: LayerFactory,
             skip_algorithm: Literal['cat', 'add'] = 'cat',
+            cond_dim: int,
+            noise_embedding: LayerFactory,
+            label_embedding: Optional[LayerFactory] = None,
+            allow_self_cond: bool = False,
     ):
         """
         Construct a non-equivariant U-Net.
@@ -80,7 +82,7 @@ class AsymUNet(UNet):
                             *,
                             in_channels: int,
                             out_channels: int,
-                            time_dim: int,
+                            cond_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
             latent_factory:
@@ -91,7 +93,7 @@ class AsymUNet(UNet):
                     latent_factory(
                             *,
                             channels: int,
-                            time_dim: int,
+                            cond_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
             downsample_factory:
@@ -118,26 +120,27 @@ class AsymUNet(UNet):
                             channels: int,
                     ) -> nn.Module | Iterable[nn.Module]
 
-            time_dim:
-                The dimension of the time embedding that will be passed to the 
-                `forward()` method.  The purpose of the time embedding is to 
+            cond_dim:
+                The dimension of the condition embedding that will be passed to the 
+                `forward()` method.  The purpose of this embedding is to 
                 inform the model about the amount of noise present in the 
                 input.
 
-            time_factory:
+            noise_embedding:
                 A function than can be used to instantiate one or more 
                 non-equivariant modules that will be used to make a latent 
-                embedding of the time vectors that will be shared between each 
-                encoder/decoder block of the U-Net.  Typically this is a 
-                shallow MLP.  It is also typical for each encoder/decoder block 
-                to pass this embedding through another shallow MLP before 
-                incorporating it into the main latent representation of the 
-                image, but how/if this is done is up to the encoder/decoder 
-                factories.  This factory should have the following signature:
+                embedding of the noise level of the current diffusion step.
+                This embedding will be shared between each encoder/decoder 
+                block of the U-Net.  Typically, this module is a shallow MLP.  
+                It is also typical for each encoder/decoder block to pass this 
+                embedding through another shallow MLP before incorporating it 
+                into the main latent representation of the image, but how/if 
+                this is done is up to the encoder/decoder factories.  This 
+                factory should have the following signature:
 
-                    time_factory(
+                    noise_embedding(
                             *,
-                            time_dim: int,
+                            cond_dim: int,
                     ) -> nn.Module | Iterable[nn.Module]
         """
 
@@ -162,7 +165,7 @@ class AsymUNet(UNet):
                     block = factory(
                             in_channels=in_channels if is_first_j else out_channels,
                             out_channels=out_channels,
-                            time_dim=time_dim,
+                            cond_dim=cond_dim,
                     )
                     yield PushSkip.from_layers(block)
 
@@ -171,7 +174,7 @@ class AsymUNet(UNet):
 
             latent = latent_factory(
                     channels=out_channels,
-                    time_dim=time_dim,
+                    cond_dim=cond_dim,
             )
             yield NoSkip.from_layers(latent)
 
@@ -185,7 +188,7 @@ class AsymUNet(UNet):
                     block = factory(
                             in_channels=PopSkip.adjust_in_channels(in_channels),
                             out_channels=in_channels if not is_last_j else out_channels,
-                            time_dim=time_dim,
+                            cond_dim=cond_dim,
                     )
                     yield PopSkip.from_layers(block)
 
@@ -214,14 +217,16 @@ class AsymUNet(UNet):
                 yield *in_out_channels, block_factories_i
 
         super().__init__(
-                blocks=iter_unet_blocks(),
-                time_embedding=time_factory(time_dim),
+                model=UNet(iter_unet_blocks()),
+                noise_embedding=noise_embedding(cond_dim),
+                label_embedding=label_embedding and label_embedding(cond_dim),
+                allow_self_cond=allow_self_cond,
         )
 
 
 class AsymConditionedConvBlock(nn.Module):
     """
-    A time-conditioned block with two convolutions and a residual connection.
+    A conditioned block with two convolutions and a residual connection.
     """
 
     def __init__(
@@ -229,7 +234,7 @@ class AsymConditionedConvBlock(nn.Module):
             in_channels,
             out_channels,
             *,
-            time_dim,
+            cond_dim,
             size_algorithm: Literal['padded-conv', 'upsample', 'transposed-conv'] = 'padded-conv',
             activation_factory: Callable[[], nn.Module] = nn.ReLU,
     ):
@@ -272,7 +277,11 @@ class AsymConditionedConvBlock(nn.Module):
         else:
             raise ValueError(f"unknown size-maintenance algorithm: {size_algorithm!r}")
 
-        self.time = AddTimeToImage(time_dim, out_channels)
+        self.cond = AddConditionToImage(
+                cond_dim=cond_dim,
+                channel_dim=out_channels,
+                affine=True,
+        )
 
         self.bn1 = nn.BatchNorm3d(out_channels)
         self.bn2 = nn.BatchNorm3d(out_channels)
@@ -289,7 +298,7 @@ class AsymConditionedConvBlock(nn.Module):
                     kernel_size=1,
             )
 
-    def forward(self, x, t):
+    def forward(self, x, y):
         w, h, d = x.shape[-3:]
         assert w == h == d
         assert w >= self.min_input_size
@@ -297,7 +306,7 @@ class AsymConditionedConvBlock(nn.Module):
         x_conv = (
                 x
                 | f(self.conv1)
-                | f(self.time, t)
+                | f(self.cond, y)
                 | f(self.bn1)
                 | f(self.act1)
                 | f(self.conv2)

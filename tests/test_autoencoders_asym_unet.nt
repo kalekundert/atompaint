@@ -5,41 +5,41 @@ test_asym_conditioned_conv_block:
       > AsymConditionedConvBlock(
       >         in_channels=1,
       >         out_channels=1,
-      >         time_dim=1,
+      >         cond_dim=1,
       >         size_algorithm='padded-conv',
       > )
     x_shape: 2, 1, 7, 7, 7
-    t_shape: 2, 1
+    y_shape: 2, 1
   -
     id: size_algo_upsample
     block:
       > AsymConditionedConvBlock(
       >         in_channels=1,
       >         out_channels=1,
-      >         time_dim=1,
+      >         cond_dim=1,
       >         size_algorithm='upsample',
       > )
     x_shape: 2, 1, 7, 7, 7
-    t_shape: 2, 1
+    y_shape: 2, 1
   -
     id: size_algo_transposed_conv
     block:
       > AsymConditionedConvBlock(
       >         in_channels=1,
       >         out_channels=1,
-      >         time_dim=1,
+      >         cond_dim=1,
       >         size_algorithm='transposed-conv',
       > )
     x_shape: 2, 1, 3, 3, 3
-    t_shape: 2, 1
+    y_shape: 2, 1
   -
     id: skip
     block:
       > AsymConditionedConvBlock(
       >         in_channels=1,
       >         out_channels=2,
-      >         time_dim=4,
+      >         cond_dim=4,
       > )
     x_shape: 2, 1, 3, 3, 3
-    y_shape: 2, 2, 3, 3, 3
-    t_shape: 2, 4
+    y_shape: 2, 4
+    xy_shape: 2, 2, 3, 3, 3

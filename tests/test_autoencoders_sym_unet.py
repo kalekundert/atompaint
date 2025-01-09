@@ -7,7 +7,9 @@ from atompaint.autoencoders.sym_unet import SymUNet, SymUNetBlock
 from atompaint.layers import sym_conv_bn_fourier_layer
 from atompaint.field_types import make_fourier_field_types
 from atompaint.upsampling import R3Upsampling
-from atompaint.time_embedding import SinusoidalEmbedding, LinearTimeActivation
+from atompaint.conditioning import (
+        SinusoidalEmbedding, LinearConditionedActivation,
+)
 from atompaint.vendored.escnn_nn_testing import (
         check_equivariance, get_exact_3d_rotations,
 )
@@ -19,12 +21,7 @@ from escnn.gspaces import rot3dOnR3
 from multipartial import multipartial
 from torchtest import assert_vars_change
 
-from test_time_embedding import ModuleWrapper, InputWrapper
-
-# I didn't include an equivariance test here because the model is big enough 
-# that its equivariance is too imperfect to test automatically.  However, in 
-# experiment #87, I manually confirmed that many different configurations of 
-# the U-Net are acceptably equivariant.
+from test_conditioning import ModuleWrapper, InputWrapper
 
 @pytest.mark.parametrize('skip_algorithm', ['cat', 'add'])
 def test_sym_unet(skip_algorithm):
@@ -38,11 +35,11 @@ def test_sym_unet(skip_algorithm):
     def tail_factory(in_type, out_type):
         yield R3ConvTransposed(in_type, out_type, kernel_size=3)
 
-    def block_factory(in_type, out_type, time_dim):
+    def block_factory(in_type, out_type, cond_dim):
         return SymUNetBlock(
                 in_type,
-                time_activation=LinearTimeActivation(
-                    time_dim=time_dim,
+                cond_activation=LinearConditionedActivation(
+                    cond_dim=cond_dim,
                     activation=FourierPointwise(
                         out_type,
                         grid=grid,
@@ -54,8 +51,8 @@ def test_sym_unet(skip_algorithm):
                 ),
         )
 
-    def latent_factory(in_type, time_dim):
-        return block_factory(in_type, in_type, time_dim)
+    def latent_factory(in_type, cond_dim):
+        return block_factory(in_type, in_type, cond_dim)
 
     def downsample_factory(in_type):
         return PointwiseAvgPoolAntialiased3D(
@@ -70,13 +67,13 @@ def test_sym_unet(skip_algorithm):
                 size_expr=lambda x: 2*x - 1,
         )
 
-    def time_factory(time_dim):
+    def noise_embedding(cond_dim):
         yield SinusoidalEmbedding(
-                out_dim=time_dim,
+                out_dim=cond_dim,
                 min_wavelength=0.1,
                 max_wavelength=100,
         )
-        yield nn.Linear(time_dim, time_dim)
+        yield nn.Linear(cond_dim, cond_dim)
         yield nn.ReLU()
     
     unet = SymUNet(
@@ -92,25 +89,25 @@ def test_sym_unet(skip_algorithm):
             latent_factory=latent_factory,
             downsample_factory=downsample_factory,
             upsample_factory=upsample_factory,
-            time_factory=time_factory,
-            time_dim=16,
+            noise_embedding=noise_embedding,
+            cond_dim=16,
             skip_algorithm=skip_algorithm,
     )
 
     x = torch.randn(2, 3, 7, 7, 7)
-    t = torch.randn(2)
-    y = torch.randn(2, 3, 7, 7, 7)
+    y = torch.randn(2)
+    xy = torch.randn(2, 3, 7, 7, 7)
 
     assert_vars_change(
             model=ModuleWrapper(unet),
             loss_fn=nn.MSELoss(),
             optim=torch.optim.Adam(unet.parameters()),
-            batch=(InputWrapper(x, t), y),
+            batch=(InputWrapper(x, y), xy),
             device='cpu',
     )
 
     check_equivariance(
-            lambda x: unet(x, t),
+            lambda x: unet(x, y),
             in_tensor=x,
             in_type=unet.in_type,
             out_shape=x.shape,
@@ -138,8 +135,8 @@ def test_sym_unet_block_equivariance(size_algorithm, in_channels, out_channels):
 
     block = SymUNetBlock(
             in_type,
-            time_activation=LinearTimeActivation(
-                time_dim=16,
+            cond_activation=LinearConditionedActivation(
+                cond_dim=16,
                 activation=FourierPointwise(
                     out_type,
                     grid=grid,
@@ -151,11 +148,11 @@ def test_sym_unet_block_equivariance(size_algorithm, in_channels, out_channels):
             ),
             size_algorithm=size_algorithm,
     )
-    t = torch.randn(2, 16)
+    y = torch.randn(2, 16)
     d = block.min_input_size
 
     check_equivariance(
-            lambda x: block(x, t),
+            lambda x: block(x, y),
             in_tensor=(2, in_type.size, d, d, d),
             in_type=block.in_type,
             out_shape=(2, out_type.size, d, d, d),

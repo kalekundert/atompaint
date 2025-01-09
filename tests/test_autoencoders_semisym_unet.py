@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import pytest
 
-from test_time_embedding import ModuleWrapper, InputWrapper
+from test_conditioning import ModuleWrapper, InputWrapper
 from atompaint.autoencoders.semisym_unet import SemiSymUNet
 from atompaint.autoencoders.sym_unet import SymUNetBlock
 from atompaint.autoencoders.asym_unet import AsymConditionedConvBlock, AsymAttentionBlock
 from atompaint.layers import UnwrapTensor
 from atompaint.field_types import make_fourier_field_types
 from atompaint.upsampling import Upsample3d
-from atompaint.time_embedding import SinusoidalEmbedding, LinearTimeActivation
+from atompaint.conditioning import SinusoidalEmbedding, LinearConditionedActivation
 from escnn.nn import R3Conv, IIDBatchNorm3d, FourierPointwise, PointwiseAvgPoolAntialiased3D
 from escnn.gspaces import rot3dOnR3
 from multipartial import multipartial, rows
@@ -34,11 +34,11 @@ def test_semisym_unet(skip_algorithm):
                 padding=0,
         )
 
-    def encoder_factory(in_type, out_type, time_dim):
+    def encoder_factory(in_type, out_type, cond_dim):
         return SymUNetBlock(
                 in_type,
-                time_activation=LinearTimeActivation(
-                    time_dim=time_dim,
+                cond_activation=LinearConditionedActivation(
+                    cond_dim=cond_dim,
                     activation=FourierPointwise(
                         out_type,
                         grid=grid,
@@ -50,11 +50,11 @@ def test_semisym_unet(skip_algorithm):
                 ),
         )
 
-    def decoder_factory(in_channels, out_channels, time_dim, attention):
+    def decoder_factory(in_channels, out_channels, cond_dim, attention):
         yield AsymConditionedConvBlock(
                 in_channels,
                 out_channels,
-                time_dim=time_dim,
+                cond_dim=cond_dim,
         )
 
         if attention:
@@ -64,8 +64,8 @@ def test_semisym_unet(skip_algorithm):
                     channels_per_head=out_channels // 2,
             )
 
-    def latent_factory(in_type, time_dim):
-        yield encoder_factory(in_type, in_type, time_dim)
+    def latent_factory(in_type, cond_dim):
+        yield encoder_factory(in_type, in_type, cond_dim)
         yield UnwrapTensor()
 
     def downsample_factory(in_type):
@@ -81,13 +81,13 @@ def test_semisym_unet(skip_algorithm):
                 mode='trilinear',
         )
 
-    def time_factory(time_dim):
+    def noise_embedding(cond_dim):
         yield SinusoidalEmbedding(
-                out_dim=time_dim,
+                out_dim=cond_dim,
                 min_wavelength=0.1,
                 max_wavelength=100,
         )
-        yield nn.Linear(time_dim, time_dim)
+        yield nn.Linear(cond_dim, cond_dim)
         yield nn.ReLU()
 
     unet = SemiSymUNet(
@@ -107,8 +107,8 @@ def test_semisym_unet(skip_algorithm):
             downsample_factory=downsample_factory,
             upsample_factory=upsample_factory,
 
-            time_factory=time_factory,
-            time_dim=16,
+            cond_dim=16,
+            noise_embedding=noise_embedding,
 
             skip_algorithm=skip_algorithm,
     )

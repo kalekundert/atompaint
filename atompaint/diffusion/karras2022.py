@@ -10,20 +10,18 @@ from atompaint.metrics.neighbor_loc import (
         NeighborLocAccuracy, FrechetNeighborLocDistance,
 )
 from einops import reduce
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from pathlib import Path
 from tqdm import trange
 from math import sqrt
 
-from typing import Optional
+from typing import Optional, Callable, TypeAlias
 from atompaint.type_hints import OptFactory
+from torchmetrics import Metric
 
-# TODO:
-# - Save exponential moving averages of model weights [1].  This is apparently 
-#   an important hyperparameter.
-#
-#   [1] https://developer.nvidia.com/blog/rethinking-how-to-train-diffusion-models/
+RngFactory: TypeAlias = Callable[[], np.random.Generator]
+LabelFactory: TypeAlias = Callable[[np.random.Generator, int], torch.Tensor]
 
 class KarrasDiffusion(L.LightningModule):
     """
@@ -36,9 +34,11 @@ class KarrasDiffusion(L.LightningModule):
             model: KarrasPrecond,
             *,
             opt_factory: OptFactory,
+            gen_metrics: Optional[dict[str, Metric]] = None,
             gen_params: Optional[GenerateParams] = None,
-            frechet_ref_path: str | Path,
-            skip_gen_metrics: bool = False,
+            gen_rng_factory: Optional[RngFactory] = None,
+            gen_label_factory: Optional[LabelFactory] = None,
+            frechet_ref_path: Optional[str | Path] = None,
     ):
         super().__init__()
 
@@ -49,14 +49,19 @@ class KarrasDiffusion(L.LightningModule):
         # multiples of 12.
         self.gen_params = gen_params or GenerateParams()
         self.gen_params.batch_size = 12
+        self.gen_rng_factory = gen_rng_factory or (lambda: np.random.default_rng(0))
+        self.gen_label_factory = gen_label_factory or (lambda rng, b: None)
 
-        self.gen_metrics = {
-                'accuracy': NeighborLocAccuracy(),
-                'frechet_dist': FrechetNeighborLocDistance(),
-        }
-        self.gen_metrics['frechet_dist'].load_reference_stats(frechet_ref_path)
-
-        self.skip_gen_metrics = skip_gen_metrics
+        if gen_metrics is not None:
+            self.gen_metrics = gen_metrics
+        else:
+            self.gen_metrics = {
+                    'accuracy': NeighborLocAccuracy(),
+            }
+            if frechet_ref_path:
+                frechet = FrechetNeighborLocDistance()
+                frechet.load_reference_stats(frechet_ref_path)
+                self.gen_metrics['frechet_dist'] = frechet
 
         # [Karras2022], Table 1.  This mean and standard deviation should lead 
         # to σ values in roughly the range [1.9e-3, 5.4e2].
@@ -67,15 +72,50 @@ class KarrasDiffusion(L.LightningModule):
         return self.optimizer
 
     def forward(self, x):
-        x_clean, noise, rngs = x
+        x_clean = x['x_clean']; x_self_cond = None
+        noise = x['noise']
+        rngs = x['rng']
+        labels = x.get('label', None)
+
+        assert x_clean.dtype == noise.dtype
+        if labels is not None:
+            assert labels.dtype == x_clean.dtype
+
         d = x_clean.ndim - 2
 
         t_norm = rngs.normal(loc=self.P_mean, scale=self.P_std)
-        t_norm = t_norm.to(dtype=torch.float32, device=x_clean.device)
+        t_norm = t_norm.to(dtype=x_clean.dtype, device=x_clean.device)
         sigma = torch.exp(t_norm).reshape(-1, 1, *([1] * d))
-
         x_noisy = x_clean + sigma * noise
-        x_pred = self.model(x_noisy, sigma)
+
+        if self.model.self_condition:
+            x_self_cond = torch.zeros_like(x_clean)
+            mask = rngs.choice([True, False])
+
+            if mask.any():
+                self.model.eval()
+
+                with torch.inference_mode():
+                    x_self_cond_mask = self.model(
+                            x_noisy[mask],
+                            sigma[mask],
+                            label=None if labels is None else labels[mask],
+                    )
+
+                self.model.train()
+
+                x_self_cond_mask_iter = iter(x_self_cond_mask)
+
+                for i, mask_i in enumerate(mask):
+                    if mask_i:
+                        x_self_cond[i] = next(x_self_cond_mask_iter)
+
+        x_pred = self.model(
+                x_noisy,
+                sigma,
+                label=labels,
+                x_prev=x_self_cond,
+        )
 
         sigma_data = self.model.sigma_data
         weight = (sigma**2 + sigma_data**2) / (sigma * sigma_data)**2
@@ -95,7 +135,7 @@ class KarrasDiffusion(L.LightningModule):
         return loss
 
     def on_validation_epoch_end(self):
-        if self.skip_gen_metrics:
+        if not self.gen_metrics:
             return
 
         # Lightning takes care of putting the model in eval-mode and disabling 
@@ -109,10 +149,17 @@ class KarrasDiffusion(L.LightningModule):
         # 384 × 4 = 1536 updates.  In Experiment 97, I showed that this is 
         # about the smallest number needed to get a stable result.
 
-        rng = np.random.default_rng(0)
+        rng = self.gen_rng_factory()
 
         for i in trange(32, desc="Generative metrics", leave=True, file=sys.stdout):
-            x = generate(rng, self.model, self.gen_params)
+            gen_params_i = replace(
+                    self.gen_params,
+                    labels=self.gen_label_factory(
+                        rng,
+                        self.gen_params.batch_size,
+                    ),
+            )
+            x = generate(rng, self.model, gen_params_i)
 
             for metric in self.gen_metrics.values():
                 metric.to(x.device)
@@ -135,11 +182,13 @@ class KarrasPrecond(nn.Module):
             *,
             sigma_data: float,
             x_shape: list[int],
+            self_condition: bool = False,
     ):
         super().__init__()
 
         self.model = model
         self.x_shape = x_shape
+        self.self_condition = self_condition
 
         d = len(x_shape) - 1
         self.register_buffer(
@@ -148,7 +197,7 @@ class KarrasPrecond(nn.Module):
                 persistent=False,
         )
 
-    def forward(self, x_noisy, sigma):
+    def forward(self, x_noisy, sigma, *, x_prev=None, label=None):
         """
         Output a denoised version of $x_\textrm{noisy}$.
 
@@ -170,7 +219,12 @@ class KarrasPrecond(nn.Module):
         #c_noise = sigma.log() / 4
         c_noise = sigma
 
-        F_x = self.model(c_in * x_noisy, c_noise.flatten())
+        F_x = self.model(
+                c_in * x_noisy,
+                c_noise.flatten(),
+                x_self_cond=x_prev,
+                label=label,
+        )
         D_x = c_skip * x_noisy + c_out * F_x
 
         return D_x
@@ -181,6 +235,9 @@ class GenerateParams:
     sigma_min: float = 0.002
     sigma_max: float = 80
     rho: float = 7
+
+    batch_size: int = 1
+    labels: Optional[torch.Tensor] = None
 
     S_churn: float = 0
     S_min: float = 0
@@ -196,9 +253,7 @@ class GenerateParams:
     clamp_low: float = 0
     clamp_high: float = 1
 
-    batch_size: int = 1
-
-@torch.no_grad()
+@torch.inference_mode()
 def generate(
         rng,
         model: KarrasPrecond,
@@ -213,6 +268,7 @@ def generate(
     x_shape = params.batch_size, *model.x_shape
     x_cur = rng.normal(scale=t[0], size=x_shape)
     x_cur = torch.from_numpy(x_cur).float().to(device)
+    x_prev = x_cur.clone()
     t = t.to(device)
 
     if record_trajectory:
@@ -223,7 +279,14 @@ def generate(
     for t_cur, t_next in pairwise(t):
         t_cur, x_cur = _add_churn(rng, t_cur, x_cur, params)
 
-        dx_dt1 = (x_cur - model(x_cur, t_cur)) / t_cur
+        model_pred = model(
+                x_cur,
+                t_cur,
+                x_prev=x_prev if model.self_condition else None,
+                label=params.labels,
+        )
+
+        dx_dt1 = (x_cur - model_pred) / t_cur
         x_next = x_cur + (t_next - t_cur) * dx_dt1
 
         if t_next > 0:
@@ -234,6 +297,7 @@ def generate(
             traj[i] = x_next
             i += 1
 
+        x_prev = x_cur
         x_cur = x_next
 
     if record_trajectory:

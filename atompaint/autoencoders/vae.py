@@ -66,10 +66,8 @@ class VariationalAutoencoder(L.LightningModule):
         return self.optimizer
 
     def forward(self, x):
-        # Ignore the middle input so we can just directly use data loaders 
-        # meant for training diffusion models.  It'd be better if the data 
-        # loaders were more flexible, but this is the easiest solution for now.
-        img, _, rngs = x
+        img = x['image']
+        rngs = x['rng']
 
         mean_std = self.encoder(img)
 

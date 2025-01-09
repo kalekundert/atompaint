@@ -4,10 +4,10 @@ import atompaint.autoencoders.asym_unet as ap
 import parametrize_from_file as pff
 import pytest
 
-from atompaint.time_embedding import SinusoidalEmbedding
+from atompaint.conditioning import SinusoidalEmbedding
 from multipartial import multipartial
 from torchtest import assert_vars_change
-from test_time_embedding import ModuleWrapper, InputWrapper
+from test_conditioning import ModuleWrapper, InputWrapper
 
 with_py = pff.Namespace()
 with_ap = pff.Namespace('from atompaint.autoencoders.asym_unet import *')
@@ -33,26 +33,26 @@ def test_asym_unet(skip_algorithm):
                 padding=0,
         )
 
-    def block_factory(in_channels, out_channels, time_dim):
+    def block_factory(in_channels, out_channels, cond_dim):
         yield from conv_attn_factory(
                 in_channels,
                 out_channels,
-                time_dim=time_dim,
+                cond_dim=cond_dim,
         )
 
-    def latent_factory(channels, time_dim):
+    def latent_factory(channels, cond_dim):
         yield from conv_attn_factory(
                 in_channels=channels,
                 out_channels=channels,
-                time_dim=time_dim,
+                cond_dim=cond_dim,
                 attention=True,
         )
 
-    def conv_attn_factory(in_channels, out_channels, time_dim, attention=False):
+    def conv_attn_factory(in_channels, out_channels, cond_dim, attention=False):
         yield ap.AsymConditionedConvBlock(
                 in_channels,
                 out_channels,
-                time_dim=time_dim,
+                cond_dim=cond_dim,
         )
 
         if attention:
@@ -68,13 +68,13 @@ def test_asym_unet(skip_algorithm):
     def upsample_factory(channels):
         return nn.Upsample(scale_factor=2, mode='trilinear')
 
-    def time_factory(time_dim):
+    def noise_embedding(cond_dim):
         yield SinusoidalEmbedding(
-                out_dim=time_dim,
+                out_dim=cond_dim,
                 min_wavelength=0.1,
                 max_wavelength=100,
         )
-        yield nn.Linear(time_dim, time_dim)
+        yield nn.Linear(cond_dim, cond_dim)
         yield nn.ReLU()
 
     unet = ap.AsymUNet(
@@ -85,20 +85,20 @@ def test_asym_unet(skip_algorithm):
             latent_factory=latent_factory,
             downsample_factory=downsample_factory,
             upsample_factory=upsample_factory,
-            time_dim=6,
-            time_factory=time_factory,
+            cond_dim=6,
+            noise_embedding=noise_embedding,
             skip_algorithm=skip_algorithm,
     )
 
     x = torch.randn(2, 1, 8, 8, 8)
-    t = torch.randn(2)
-    y = torch.randn(2, 1, 8, 8, 8)
+    y = torch.randn(2)
+    xy = torch.randn(2, 1, 8, 8, 8)
 
     assert_vars_change(
             model=ModuleWrapper(unet),
             loss_fn=nn.MSELoss(),
             optim=torch.optim.Adam(unet.parameters()),
-            batch=(InputWrapper(x, t), y),
+            batch=(InputWrapper(x, y), xy),
             device='cpu',
     )
 
@@ -107,25 +107,25 @@ def test_asym_unet(skip_algorithm):
             pff.cast(
                 x_shape=with_py.eval,
                 y_shape=with_py.eval,
-                t_shape=with_py.eval,
+                xy_shape=with_py.eval,
             ),
             pff.defaults(
-                y_shape=None,
+                xy_shape=None,
             ),
         ],
 )
-def test_asym_conditioned_conv_block(block, x_shape, t_shape, y_shape):
+def test_asym_conditioned_conv_block(block, x_shape, y_shape, xy_shape):
     block = with_ap.eval(block)
 
     x = torch.randn(*x_shape)
-    t = torch.randn(*t_shape)
-    y = torch.randn(*(y_shape or x_shape))
+    y = torch.randn(*y_shape)
+    xy = torch.randn(*(xy_shape or x_shape))
 
     assert_vars_change(
             model=ModuleWrapper(block),
             loss_fn=nn.MSELoss(),
             optim=torch.optim.Adam(block.parameters()),
-            batch=(InputWrapper(x, t), y),
+            batch=(InputWrapper(x, y), xy),
             device='cpu',
     )
 
