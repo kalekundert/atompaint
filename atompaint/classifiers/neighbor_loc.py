@@ -306,7 +306,7 @@ def load_expt_72_model(*, device=None):
     return classifier
 
 def make_expt_72_model():
-    from atompaint.encoders.resnet import make_expt_72_resnet
+    from atompaint.encoders.sym_resnet import make_expt_72_resnet
 
     resnet = make_expt_72_resnet()
     mlp = ty.mlp_layer(
