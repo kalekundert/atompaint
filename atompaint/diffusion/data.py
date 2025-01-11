@@ -78,7 +78,7 @@ def random_label_factory(rng, batch_size, *, polymer_labels, cath_labels):
 def _get_polymer_cath_label(atoms, *, n_polymer_labels, n_cath_labels):
     polymer_label = _get_label(atoms, 'polymer_label', n_polymer_labels)
     cath_label = _get_label(atoms, 'cath_label', n_cath_labels)
-    return np.concat([polymer_label, cath_label])
+    return np.concatenate([polymer_label, cath_label])
 
 def _get_label(atoms, column, n_labels):
     if atoms.is_empty():
