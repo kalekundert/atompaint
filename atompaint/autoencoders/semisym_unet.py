@@ -173,8 +173,9 @@ class SemiSymUNet(ConditionedModel):
                 rows=len(encoder_types) - 1,
         )
         gspace = encoder_types[0].gspace
+        in_channels = img_channels * (2 if allow_self_cond else 1)
 
-        self.in_type = one(make_trivial_field_type(gspace, img_channels))
+        self.in_type = one(make_trivial_field_type(gspace, in_channels))
         self.img_channels = img_channels
 
         PopSkip = get_pop_skip_class(skip_algorithm)
