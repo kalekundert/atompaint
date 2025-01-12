@@ -1,6 +1,7 @@
 import atompaint.diffusion.data as _ap
 import parametrize_from_file as pff
 import polars as pl
+import torch
 import numpy as np
 
 with_py = pff.Namespace()
@@ -44,6 +45,9 @@ def test_random_label_factory():
     )
 
     assert labels.shape == (1024, 14)
+
+    # Over 1024 samples, we should see at least one of each label.
+    assert torch.all(labels.sum(axis=0) > 0)
 
     for label in labels:
         # There should be at most one polymer and one domain.

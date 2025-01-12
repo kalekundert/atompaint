@@ -66,7 +66,7 @@ def random_label_factory(rng, batch_size, *, polymer_labels, cath_labels):
         i = rng.integers(n_polymer_labels)
         polymer_one_hot[b, i] = 1
 
-        if polymer_labels[i] == 'polypetide(L)':
+        if polymer_labels[i] == 'polypeptide(L)':
             j = rng.integers(n_cath_labels + 1)
             if j < n_cath_labels:
                 cath_one_hot[b, j] = 1
