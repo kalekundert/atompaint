@@ -15,8 +15,14 @@ from escnn.gspaces import rot3dOnR3
 from multipartial import multipartial, rows
 from torchtest import assert_vars_change
 
-@pytest.mark.parametrize('skip_algorithm', ['cat', 'add'])
-def test_semisym_unet(skip_algorithm):
+@pytest.mark.parametrize(
+        'kwargs', [
+            dict(),
+            dict(skip_algorithm='add'),
+            dict(allow_self_cond=True),
+        ],
+)
+def test_semisym_unet(kwargs):
     gspace = rot3dOnR3()
     so3 = gspace.fibergroup
     grid = so3.grid(type='thomson_cube', N=4)
@@ -110,17 +116,22 @@ def test_semisym_unet(skip_algorithm):
             cond_dim=16,
             noise_embedding=noise_embedding,
 
-            skip_algorithm=skip_algorithm,
+            **kwargs,
     )
 
     x = torch.randn(2, 3, 7, 7, 7)
-    t = torch.randn(2)
-    y = torch.randn(2, 3, 7, 7, 7)
+    y = torch.randn(2)
+    xy = torch.randn(2, 3, 7, 7, 7)
 
+    if kwargs.get('allow_self_cond'):
+        x_self_cond = torch.randn(2, 3, 7, 7, 7)
+    else:
+        x_self_cond = None
+    
     assert_vars_change(
             model=ModuleWrapper(unet),
             loss_fn=nn.MSELoss(),
             optim=torch.optim.Adam(unet.parameters()),
-            batch=(InputWrapper(x, t), y),
+            batch=(InputWrapper(x, y, x_self_cond=x_self_cond), xy),
             device='cpu',
     )

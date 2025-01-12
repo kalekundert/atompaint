@@ -20,21 +20,25 @@ class ModuleWrapper(nn.Module):
         super().__init__()
         self.module = module
 
-    def forward(self, inputs):
-        x, t = inputs
-        y = self.module(x, t)
-        return y.tensor if isinstance(y, GeometricTensor) else y
+    def forward(self, input_wrapper):
+        x = self.module(*input_wrapper.args, **input_wrapper.kwargs)
+        return x.tensor if isinstance(x, GeometricTensor) else x
 
 class InputWrapper:
 
-    def __init__(self, *args):
-        self.inputs = args
-
-    def __iter__(self):
-        yield from self.inputs
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
 
     def to(self, device):
-        self.inputs = [x.to(device) for x in self.inputs]
+        self.args = [
+                x.to(device) if isinstance(x, torch.Tensor) else x
+                for x in self.args
+        ]
+        self.kwargs = {
+                k: x.to(device) if isinstance(x, torch.Tensor) else x
+                for k, x in self.kwargs.items()
+        }
         return self
 
 class NoOpModel(nn.Module):

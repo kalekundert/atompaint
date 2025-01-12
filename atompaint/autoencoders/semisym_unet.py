@@ -173,19 +173,18 @@ class SemiSymUNet(ConditionedModel):
                 rows=len(encoder_types) - 1,
         )
         gspace = encoder_types[0].gspace
-        in_channels = img_channels * (2 if allow_self_cond else 1)
+        head_channels = img_channels * (2 if allow_self_cond else 1)
 
-        self.in_type = one(make_trivial_field_type(gspace, in_channels))
+        self.in_type = one(make_trivial_field_type(gspace, img_channels))
+        self.head_type = one(make_trivial_field_type(gspace, head_channels))
         self.img_channels = img_channels
 
         PopSkip = get_pop_skip_class(skip_algorithm)
 
         def iter_unet_blocks():
-            t1, t2 = self.in_type, encoder_types[0]
-            
             head = head_factory(
-                    in_type=t1,
-                    out_type=t2,
+                    in_type=self.head_type,
+                    out_type=encoder_types[0],
             )
             yield NoSkip.from_layers(head)
 
@@ -224,8 +223,8 @@ class SemiSymUNet(ConditionedModel):
                     yield PopSkip.from_layers(decoder)
 
             tail = tail_factory(
-                    in_channels=t2.size,
-                    out_channels=t1.size,
+                    in_channels=encoder_types[0].size,
+                    out_channels=img_channels,
             )
             yield NoSkip.from_layers(tail)
             
@@ -255,5 +254,5 @@ class SemiSymUNet(ConditionedModel):
         )
 
     def wrap_input(self, x: Tensor) -> GeometricTensor:
-        return GeometricTensor(x, self.in_type)
+        return GeometricTensor(x, self.head_type)
 

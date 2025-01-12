@@ -151,10 +151,9 @@ class AsymUNet(ConditionedModel):
         )
 
         def iter_unet_blocks():
-            c1, c2 = channels[0:2]
             head = head_factory(
-                    in_channels=c1,
-                    out_channels=c2,
+                    in_channels=channels[0] * (2 if allow_self_cond else 1),
+                    out_channels=channels[1],
             )
             yield NoSkip.from_layers(head)
 
@@ -193,8 +192,8 @@ class AsymUNet(ConditionedModel):
                     yield PopSkip.from_layers(block)
 
             tail = tail_factory(
-                    in_channels=c2,
-                    out_channels=c1,
+                    in_channels=channels[1],
+                    out_channels=channels[0],
             )
             yield NoSkip.from_layers(tail)
 

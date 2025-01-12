@@ -12,8 +12,14 @@ from test_conditioning import ModuleWrapper, InputWrapper
 with_py = pff.Namespace()
 with_ap = pff.Namespace('from atompaint.autoencoders.asym_unet import *')
 
-@pytest.mark.parametrize('skip_algorithm', ['cat', 'add'])
-def test_asym_unet(skip_algorithm):
+@pytest.mark.parametrize(
+        'kwargs', [
+            dict(),
+            dict(skip_algorithm='add'),
+            dict(allow_self_cond=True),
+        ],
+)
+def test_asym_unet(kwargs):
 
     def head_factory(in_channels, out_channels):
         yield nn.Conv3d(
@@ -87,7 +93,7 @@ def test_asym_unet(skip_algorithm):
             upsample_factory=upsample_factory,
             cond_dim=6,
             noise_embedding=noise_embedding,
-            skip_algorithm=skip_algorithm,
+            **kwargs,
     )
 
     x = torch.randn(2, 1, 8, 8, 8)

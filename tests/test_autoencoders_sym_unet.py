@@ -23,8 +23,14 @@ from torchtest import assert_vars_change
 
 from test_conditioning import ModuleWrapper, InputWrapper
 
-@pytest.mark.parametrize('skip_algorithm', ['cat', 'add'])
-def test_sym_unet(skip_algorithm):
+@pytest.mark.parametrize(
+        'kwargs', [
+            dict(),
+            dict(skip_algorithm='add'),
+            dict(allow_self_cond=True),
+        ],
+)
+def test_sym_unet(kwargs):
     gspace = rot3dOnR3()
     so3 = gspace.fibergroup
     grid = so3.grid(type='thomson_cube', N=4)
@@ -91,7 +97,7 @@ def test_sym_unet(skip_algorithm):
             upsample_factory=upsample_factory,
             noise_embedding=noise_embedding,
             cond_dim=16,
-            skip_algorithm=skip_algorithm,
+            **kwargs,
     )
 
     x = torch.randn(2, 3, 7, 7, 7)
