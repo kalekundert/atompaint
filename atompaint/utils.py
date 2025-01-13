@@ -1,7 +1,9 @@
 import re
-from collections.abc import Sequence
+
 from escnn.nn import FieldType, GeometricTensor
 from escnn.gspaces import no_base_space
+from contextlib import contextmanager
+from collections.abc import Sequence
 
 def get_scalar(scalar_or_seq, i):
     if isinstance(scalar_or_seq, Sequence):
@@ -11,6 +13,20 @@ def get_scalar(scalar_or_seq, i):
 
 def identity(x):
     return x
+
+@contextmanager
+def eval_mode(model):
+    start_in_train_mode = model.training
+
+    if start_in_train_mode:
+        model.eval()
+
+    try:
+        yield
+
+    finally:
+        if start_in_train_mode:
+            model.train()
 
 def parse_so3_grid(group, name):
     if name in {'ico', 'cube', 'tetra'}:

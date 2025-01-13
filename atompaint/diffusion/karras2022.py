@@ -9,8 +9,10 @@ import sys
 from atompaint.metrics.neighbor_loc import (
         NeighborLocAccuracy, FrechetNeighborLocDistance,
 )
+from atompaint.utils import eval_mode
 from einops import reduce
 from dataclasses import dataclass, replace
+from functools import partial
 from itertools import pairwise
 from pathlib import Path
 from tqdm import trange
@@ -93,16 +95,12 @@ class KarrasDiffusion(L.LightningModule):
             mask = rngs.choice([True, False])
 
             if mask.any():
-                self.model.eval()
-
-                with torch.inference_mode():
+                with torch.inference_mode(), eval_mode(self.model):
                     x_self_cond_mask = self.model(
                             x_noisy[mask],
                             sigma[mask],
                             label=None if labels is None else labels[mask],
                     )
-
-                self.model.train()
 
                 x_self_cond_mask_iter = iter(x_self_cond_mask)
 
@@ -134,6 +132,7 @@ class KarrasDiffusion(L.LightningModule):
         self.log('val/loss', loss, on_epoch=True, sync_dist=True)
         return loss
 
+    @torch.inference_mode()
     def on_validation_epoch_end(self):
         if not self.gen_metrics:
             return
@@ -264,12 +263,15 @@ def generate(
     device = next(model.parameters()).device
 
     # See Algorithm 2 from [Karras2022].
-    t = _calc_sigma_schedule(params)
+    t = _calc_sigma_schedule(params).to(device)
     x_shape = params.batch_size, *model.x_shape
-    x_cur = rng.normal(scale=t[0], size=x_shape)
+    x_cur = rng.normal(scale=float(t[0]), size=x_shape)
     x_cur = torch.from_numpy(x_cur).float().to(device)
     x_prev = x_cur.clone()
-    t = t.to(device)
+
+    label = params.labels
+    if label is not None:
+        label = label.to(device)
 
     if record_trajectory:
         traj = torch.zeros(params.time_steps + 1, *x_shape).to(device)
@@ -278,19 +280,17 @@ def generate(
 
     for t_cur, t_next in pairwise(t):
         t_cur, x_cur = _add_churn(rng, t_cur, x_cur, params)
-
-        model_pred = model(
-                x_cur,
-                t_cur,
+        model_i = partial(
+                model,
                 x_prev=x_prev if model.self_condition else None,
-                label=params.labels,
+                label=label,
         )
 
-        dx_dt1 = (x_cur - model_pred) / t_cur
+        dx_dt1 = (x_cur - model_i(x_cur, t_cur)) / t_cur
         x_next = x_cur + (t_next - t_cur) * dx_dt1
 
         if t_next > 0:
-            dx_dt2 = (x_next - model(x_next, t_next)) / t_next
+            dx_dt2 = (x_next - model_i(x_next, t_next)) / t_next
             x_next = x_cur + (t_next - t_cur) * (dx_dt1 + dx_dt2) / 2
 
         if record_trajectory:
