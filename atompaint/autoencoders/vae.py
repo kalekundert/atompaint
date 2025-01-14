@@ -113,6 +113,18 @@ class VaeLoss:
     def total(self):
         return self.data + self.beta * self.prior
 
+def make_vae_image_tensors(db, db_cache, rng, zone_id, *, img_params):
+    from macromol_gym_unsupervised import make_unsupervised_image_sample
+
+    x = make_unsupervised_image_sample(
+            db, db_cache, rng, zone_id,
+            img_params=img_params,
+    )
+    return dict(
+            rng=x['rng'],
+            image=x['image'],
+    )
+
 def kl_divergence_vs_std_normal(mean, std):
     # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence#Multivariate_normal_distributions
     return 0.5 * torch.sum(std + mean**2 - 1 - torch.log(std))
