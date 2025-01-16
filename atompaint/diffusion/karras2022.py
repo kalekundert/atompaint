@@ -19,7 +19,7 @@ from tqdm import trange
 from math import sqrt
 
 from typing import Optional, Callable, TypeAlias
-from atompaint.type_hints import OptFactory
+from atompaint.type_hints import OptFactory, LrFactory
 from torchmetrics import Metric
 
 RngFactory: TypeAlias = Callable[[], np.random.Generator]
@@ -36,6 +36,7 @@ class KarrasDiffusion(L.LightningModule):
             model: KarrasPrecond,
             *,
             opt_factory: OptFactory,
+            lr_factory: Optional[LrFactory] = None,
             gen_metrics: Optional[dict[str, Metric]] = None,
             gen_params: Optional[GenerateParams] = None,
             gen_rng_factory: Optional[RngFactory] = None,
@@ -46,6 +47,7 @@ class KarrasDiffusion(L.LightningModule):
 
         self.model = model
         self.optimizer = opt_factory(model.parameters())
+        self.lr_scheduler = lr_factory(self.optimizer) if lr_factory else None
 
         # The neighbor-location-based metrics require batch sizes that are 
         # multiples of 12.
@@ -71,7 +73,18 @@ class KarrasDiffusion(L.LightningModule):
         self.P_std = 1.2
 
     def configure_optimizers(self):
-        return self.optimizer
+        if self.lr_scheduler is None:
+            return self.optimizer
+        else:
+            return {
+                'optimizer': self.optimizer,
+                'lr_scheduler': {
+                    'scheduler': self.lr_scheduler,
+                    'interval': 'epoch',
+                    'frequency': 1,
+                    'monitor': 'val/loss',
+                },
+            }
 
     def forward(self, x):
         x_clean = x['x_clean']; x_self_cond = None

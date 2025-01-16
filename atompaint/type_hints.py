@@ -29,4 +29,8 @@ OptFactory: TypeAlias = Callable[
         [Iterable[torch.nn.Parameter]],
         torch.optim.Optimizer,
 ]
+LrFactory: TypeAlias = Callable[
+        [torch.optim.Optimizer],
+        torch.optim.lr_scheduler.LRScheduler,
+]
 
