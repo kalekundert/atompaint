@@ -56,23 +56,9 @@ def load_random_label_factory(db, db_cache):
     )
 
 def random_label_factory(rng, batch_size, *, polymer_labels, cath_labels):
-    n_polymer_labels = len(polymer_labels)
-    polymer_one_hot = np.zeros((batch_size, n_polymer_labels))
-
-    n_cath_labels = len(cath_labels)
-    cath_one_hot = np.zeros((batch_size, n_cath_labels))
-
-    for b in range(batch_size):
-        i = rng.integers(n_polymer_labels)
-        polymer_one_hot[b, i] = 1
-
-        if polymer_labels[i] == 'polypeptide(L)':
-            j = rng.integers(n_cath_labels + 1)
-            if j < n_cath_labels:
-                cath_one_hot[b, j] = 1
-
-    labels = np.hstack([polymer_one_hot, cath_one_hot])
-    return torch.from_numpy(labels).to(dtype=torch.float32)
+    one_hots = _get_all_polymer_cath_labels(polymer_labels, cath_labels)
+    i = rng.integers(one_hots.shape[0], size=batch_size)
+    return torch.from_numpy(one_hots[i]).float()
 
 
 def _get_polymer_cath_label(atoms, *, n_polymer_labels, n_cath_labels):
@@ -102,3 +88,12 @@ def _get_label(atoms, column, n_labels):
     )
     return label_counts / len(atoms)
 
+def _get_all_polymer_cath_labels(polymer_labels, cath_labels):
+    n_polymer_labels = len(polymer_labels)
+    n_cath_labels = len(cath_labels)
+    polypeptide_i = polymer_labels.index('polypeptide(L)')
+
+    labels = np.eye(n_polymer_labels + n_cath_labels)
+    labels[n_polymer_labels:, polypeptide_i] = 1
+
+    return labels

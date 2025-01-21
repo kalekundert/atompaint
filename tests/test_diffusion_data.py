@@ -5,6 +5,16 @@ import torch
 import numpy as np
 
 with_py = pff.Namespace()
+POLYMER_LABELS = [
+        'polypeptide(L)',
+        'polydeoxyribonucleotide',
+        'polyribonucleotide',
+]
+CATH_LABELS = [
+        '1.10', '1.20',
+        '2.30', '2.40', '2.60',
+        '3.10', '3.20', '3.30', '3.40', '3.60', '3.90',
+]
 
 def labeled_atoms(*label_cols):
 
@@ -24,30 +34,21 @@ def label(x):
 
 
 def test_random_label_factory():
-    polymer_labels = [
-            'polypeptide(L)',
-            'polydeoxyribonucleotide',
-            'polyribonucleotide',
-    ]
-    cath_labels = [
-            '1.10', '1.20',
-            '2.30', '2.40', '2.60',
-            '3.10', '3.20', '3.30', '3.40', '3.60', '3.90',
-    ]
-
     rng = np.random.default_rng(0)
 
     labels = _ap.random_label_factory(
             rng=rng,
             batch_size=1024, 
-            polymer_labels=polymer_labels,
-            cath_labels=cath_labels,
+            polymer_labels=POLYMER_LABELS,
+            cath_labels=CATH_LABELS,
     )
 
     assert labels.shape == (1024, 14)
 
-    # Over 1024 samples, we should see at least one of each label.
-    assert torch.all(labels.sum(axis=0) > 0)
+    # Over 1024 samples, we would expect to see each label 73 times on average.  
+    # I arbitrarily reduced the threshold to 50, to account for random 
+    # variance.
+    assert torch.all(labels.sum(axis=0) > 50)
 
     for label in labels:
         # There should be at most one polymer and one domain.
@@ -95,3 +96,25 @@ def test_get_label(atoms, n_labels, expected):
             expected,
     )
 
+def test_get_all_polymer_cath_labels():
+    labels = _ap._get_all_polymer_cath_labels(POLYMER_LABELS, CATH_LABELS)
+    expected = [
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # protein, no domain
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # DNA
+            [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # RNA
+            [1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # protein, 1st domain
+            [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # protein, 2nd domain
+            [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],  # ...
+            [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    ]
+
+    # The order of the rows is enforced by this test, but it doesn't really 
+    # matter.
+    np.testing.assert_allclose(labels, expected)
