@@ -1,0 +1,78 @@
+test_get_batch_indices:
+  -
+    id: images-1-batch-1
+    num_images: 1
+    max_batch_size: 1
+    expected:
+      - 0, 1
+  -
+    id: images-1-batch-2
+    num_images: 1
+    max_batch_size: 2
+    expected:
+      - 0, 1
+  -
+    id: images-1-batch-inf
+    num_images: 1
+    max_batch_size: None
+    expected:
+      - 0, 1
+  -
+    id: images-2-batch-1
+    num_images: 2
+    max_batch_size: 1
+    expected:
+      - 0, 1
+      - 1, 2
+  -
+    id: images-2-batch-2
+    num_images: 2
+    max_batch_size: 2
+    expected:
+      - 0, 2
+  -
+    id: images-2-batch-3
+    num_images: 2
+    max_batch_size: 3
+    expected:
+      - 0, 2
+  -
+    id: images-2-batch-inf
+    num_images: 2
+    max_batch_size: None
+    expected:
+      - 0, 2
+  -
+    id: images-3-batch-1
+    num_images: 3
+    max_batch_size: 1
+    expected:
+      - 0, 1
+      - 1, 2
+      - 2, 3
+  -
+    id: images-3-batch-2
+    num_images: 3
+    max_batch_size: 2
+    expected:
+      - 0, 2
+      - 2, 3
+  -
+    id: images-3-batch-3
+    num_images: 3
+    max_batch_size: 3
+    expected:
+      - 0, 3
+  -
+    id: images-3-batch-4
+    num_images: 3
+    max_batch_size: 4
+    expected:
+      - 0, 3
+  -
+    id: images-3-batch-inf
+    num_images: 3
+    max_batch_size: None
+    expected:
+      - 0, 3
+

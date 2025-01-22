@@ -31,6 +31,7 @@ dependencies = [
   'torchmetrics',
   'torchyield',
   'tqdm',
+  'tquiet',
   'xxhash',
 ]
 

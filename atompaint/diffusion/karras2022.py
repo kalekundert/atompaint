@@ -3,6 +3,7 @@ from __future__ import annotations
 import lightning as L
 import torch
 import torch.nn as nn
+import polars as pl
 import numpy as np
 import sys
 
@@ -10,20 +11,22 @@ from atompaint.metrics.neighbor_loc import (
         NeighborLocAccuracy, FrechetNeighborLocDistance,
 )
 from atompaint.utils import eval_mode
-from einops import reduce
+from einops import reduce, repeat
 from dataclasses import dataclass, replace
 from functools import partial
 from itertools import pairwise
 from pathlib import Path
 from tqdm import trange
+from tquiet import tquiet, ProgressBarFactory
 from math import sqrt
 
-from typing import Optional, Callable, TypeAlias
+from typing import TypeAlias, Optional, Callable, Any
 from atompaint.type_hints import OptFactory, LrFactory
 from torchmetrics import Metric
 
 RngFactory: TypeAlias = Callable[[], np.random.Generator]
 LabelFactory: TypeAlias = Callable[[np.random.Generator, int], torch.Tensor]
+SolverHook: TypeAlias = Callable[[dict[str, Any]], Any]
 
 class KarrasDiffusion(L.LightningModule):
     """
@@ -33,7 +36,7 @@ class KarrasDiffusion(L.LightningModule):
 
     def __init__(
             self,
-            model: KarrasPrecond,
+            precond: KarrasPrecond,
             *,
             opt_factory: OptFactory,
             lr_factory: Optional[LrFactory] = None,
@@ -45,8 +48,8 @@ class KarrasDiffusion(L.LightningModule):
     ):
         super().__init__()
 
-        self.model = model
-        self.optimizer = opt_factory(model.parameters())
+        self.precond = precond
+        self.optimizer = opt_factory(precond.parameters())
         self.lr_scheduler = lr_factory(self.optimizer) if lr_factory else None
 
         # The neighbor-location-based metrics require batch sizes that are 
@@ -103,13 +106,13 @@ class KarrasDiffusion(L.LightningModule):
         sigma = torch.exp(t_norm).reshape(-1, 1, *([1] * d))
         x_noisy = x_clean + sigma * noise
 
-        if self.model.self_condition:
+        if self.precond.self_condition:
             x_self_cond = torch.zeros_like(x_clean)
             mask = rngs.choice([True, False])
 
             if mask.any():
-                with torch.inference_mode(), eval_mode(self.model):
-                    x_self_cond_mask = self.model(
+                with torch.inference_mode(), eval_mode(self.precond):
+                    x_self_cond_mask = self.precond(
                             x_noisy[mask],
                             sigma[mask],
                             label=None if labels is None else labels[mask],
@@ -121,14 +124,14 @@ class KarrasDiffusion(L.LightningModule):
                     if mask_i:
                         x_self_cond[i] = next(x_self_cond_mask_iter)
 
-        x_pred = self.model(
+        x_pred = self.precond(
                 x_noisy,
                 sigma,
                 label=labels,
-                x_prev=x_self_cond,
+                x_self_cond=x_self_cond,
         )
 
-        sigma_data = self.model.sigma_data
+        sigma_data = self.precond.sigma_data
         weight = (sigma**2 + sigma_data**2) / (sigma * sigma_data)**2
         loss = weight * (x_pred - x_clean)**2
         loss = reduce(loss, 'b c ... -> c ...', 'mean').sum()
@@ -171,7 +174,7 @@ class KarrasDiffusion(L.LightningModule):
                         self.gen_params.batch_size,
                     ),
             )
-            x = generate(rng, self.model, gen_params_i)
+            x = generate(rng, self.precond, gen_params_i)
 
             for metric in self.gen_metrics.values():
                 metric.to(x.device)
@@ -187,20 +190,24 @@ class KarrasDiffusion(L.LightningModule):
         return loss
 
 class KarrasPrecond(nn.Module):
-    
+
     def __init__(
             self,
             model: nn.Module,
             *,
             sigma_data: float,
             x_shape: list[int],
+            label_dim: int = 0,
             self_condition: bool = False,
+            use_karras_c_noise: bool = False,
     ):
         super().__init__()
 
         self.model = model
         self.x_shape = x_shape
+        self.label_dim = label_dim
         self.self_condition = self_condition
+        self.use_karras_c_noise = use_karras_c_noise
 
         d = len(x_shape) - 1
         self.register_buffer(
@@ -209,7 +216,7 @@ class KarrasPrecond(nn.Module):
                 persistent=False,
         )
 
-    def forward(self, x_noisy, sigma, *, x_prev=None, label=None):
+    def forward(self, x_noisy, sigma, *, x_self_cond=None, label=None):
         """
         Output a denoised version of $x_\textrm{noisy}$.
 
@@ -222,35 +229,55 @@ class KarrasPrecond(nn.Module):
         """
         assert x_noisy.shape[1:] == self.x_shape
         sigma_data = self.sigma_data
-        
+
         c_skip = sigma_data ** 2 / (sigma ** 2 + sigma_data ** 2)
         c_out = sigma * sigma_data / (sigma ** 2 + sigma_data ** 2).sqrt()
         c_in = 1 / (sigma_data ** 2 + sigma ** 2).sqrt()
-        # [Karras2022] includes this log-transformation, but I don't think it 
-        # makes sense.  See Experiment 83 for details.
-        #c_noise = sigma.log() / 4
-        c_noise = sigma
+
+        # [Karras2022] calls for `c_noise = sigma.log() / 4`, but I don't think 
+        # this makes sense.  See experiment #83 for details.  However, I 
+        # included an option to use the original formula so that I could test
+        # my `KarrasPrecond` class on the pretrained models from [Karras2022].
+        c_noise = sigma.log() / 4 if self.use_karras_c_noise else sigma
 
         F_x = self.model(
                 c_in * x_noisy,
                 c_noise.flatten(),
-                x_self_cond=x_prev,
-                label=label,
+                **self._get_model_kwargs(x_self_cond, label),
         )
         D_x = c_skip * x_noisy + c_out * F_x
 
         return D_x
 
-@dataclass
+    def _get_model_kwargs(self, x_self_cond, label):
+        model_kwargs = {}
+
+        # If the caller provides a label, the model must be expecting it.
+        if self.label_dim == 0:
+            assert label is None
+        else:
+            assert label is not None
+            assert label.shape[-1] == self.label_dim
+            model_kwargs['label'] = label
+
+        # The caller is allowed to provide `x_self_cond` even if the model 
+        # doesn't need it.  It will just be ignored in this case.
+        if self.self_condition:
+            assert x_self_cond is not None
+            model_kwargs['x_self_cond'] = x_self_cond
+
+        return model_kwargs
+
+@dataclass(kw_only=True)
 class GenerateParams:
-    time_steps: int = 18
+    noise_steps: int = 18
+    resample_steps: int = 1
+
     sigma_min: float = 0.002
     sigma_max: float = 80
     rho: float = 7
 
-    batch_size: int = 1
-    labels: Optional[torch.Tensor] = None
-
+    # These variable names come from [Karras2022].
     S_churn: float = 0
     S_min: float = 0
     S_max: float = float('inf')
@@ -265,60 +292,353 @@ class GenerateParams:
     clamp_low: float = 0
     clamp_high: float = 1
 
+    # Cap the number of images that can be fed to the model at once.  This is 
+    # meant to help prevent the image-generation process from exceeding the 
+    # available VRAM.  If `None`, no cap is set.
+    max_batch_size: Optional[int] = None
+
+@dataclass(kw_only=True)
+class InpaintParams(GenerateParams):
+    resample_steps: int = 10
+
 @torch.inference_mode()
 def generate(
-        rng,
-        model: KarrasPrecond,
+        *,
+        precond: KarrasPrecond,
+        labels: Optional[torch.Tensor] = None,
         params: GenerateParams,
+        num_images: int,
+        rng: np.random.Generator,
+        progress_bar: ProgressBarFactory = tquiet,
         record_trajectory: bool = False,
 ):
-    assert not model.training
-    device = next(model.parameters()).device
+    if labels is not None:
+        if labels.shape[-1:] != precond.label_dim:
+            raise ValueError(f"The model requires labels with {precond.label_dim} dimensions, but the given label has shape {labels.shape}")
 
-    # See Algorithm 2 from [Karras2022].
-    t = _calc_sigma_schedule(params).to(device)
-    x_shape = params.batch_size, *model.x_shape
-    x_cur = rng.normal(scale=float(t[0]), size=x_shape)
-    x_cur = torch.from_numpy(x_cur).float().to(device)
-    x_prev = x_cur.clone()
-
-    label = params.labels
-    if label is not None:
-        label = label.to(device)
+        if len(labels).shape == 1:
+            labels = repeat(labels, '... -> b ...', b=num_images)
+        if num_images != labels.shape[0]:
+            raise ValueError(f"Requested {num_images} images, but provided {len(labels)} labels")
 
     if record_trajectory:
-        traj = torch.zeros(params.time_steps + 1, *x_shape).to(device)
-        traj[0] = x_cur
-        i = 1
+        traj = []
 
-    for t_cur, t_next in pairwise(t):
-        t_cur, x_cur = _add_churn(rng, t_cur, x_cur, params)
-        model_i = partial(
-                model,
-                x_prev=x_prev if model.self_condition else None,
-                label=label,
-        )
+    def on_end_step(**locals):
+        if record_trajectory:
+            traj.append(dict(
+                    i=locals['i'],
+                    j=locals['j'],
 
-        dx_dt1 = (x_cur - model_i(x_cur, t_cur)) / t_cur
-        x_next = x_cur + (t_next - t_cur) * dx_dt1
+                    σ1=locals['σ1'].item(),
+                    σ2=locals['σ2'].item(),
+                    σ3=locals['σ3'].item(),
 
-        if t_next > 0:
-            dx_dt2 = (x_next - model_i(x_next, t_next)) / t_next
-            x_next = x_cur + (t_next - t_cur) * (dx_dt1 + dx_dt2) / 2
+                    x_noisy_σ1=locals['x_noisy_σ1'],
+                    x_clean_σ1=locals['x_clean_σ1'],
+
+                    x_noisy_σ2=locals['x_noisy_σ2'],
+                    x_clean_σ2=locals['x_clean_σ2'],
+
+                    x_noisy_σ3=locals['x_noisy_σ3'],
+                    x_noisy_σ3_1st_order=locals['x_noisy_σ3_1st_order'],
+                    x_noisy_σ3_2nd_order=locals['x_noisy_σ3'] if locals['σ3'] > 0 else None,
+                    x_clean_σ3=locals['x_clean_σ3'] if locals['σ3'] > 0 else None,
+            ))
+
+    x_generate = _heun_sde_solver(
+            precond=precond,
+            params=params,
+            num_images=num_images,
+            labels=labels,
+            rng=rng,
+
+            on_end_step=on_end_step,
+            progress_bar=progress_bar,
+    )
+
+    if record_trajectory:
+        return x_generate, pl.DataFrame(traj)
+    else:
+        return x_generate
+
+@torch.inference_mode()
+def inpaint(
+        *,
+        precond: KarrasPrecond,
+        x_known: torch.Tensor,
+        mask: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        params: InpaintParams,
+        num_images: Optional[int] = None,
+        rng: np.random.Generator,
+        progress_bar: ProgressBarFactory = tquiet,
+        record_trajectory: bool = False,
+):
+    d = len(precond.x_shape)
+
+    if x_known.shape[-d:] != precond.x_shape:
+        raise ValueError(f"The model requires images with shape {precond.x_shape}, but the known image has shape {x_known.shape}")
+
+    if len(x_known.shape) == d:
+        x_known = repeat(x_known, '... -> 1 ...')
+
+    if num_images is None:
+        num_images = x_known.shape[0]
+    else:
+        if x_known.shape[0] == 1:
+            x_known = repeat(x_known, '1 ... -> b ...', b=num_images)
+        if num_images != x_known.shape[0]:
+            raise ValueError(f"Requested {num_images} images, but provided {len(x_known)} known images")
+
+    if len(mask.shape) == d - 1:
+        mask = repeat(mask, '... -> b c ...', b=num_images, c=precond.x_shape[0])
+
+    if mask.shape[-d:] != precond.x_shape:
+        raise ValueError(f"The model requires images with shape {precond.x_shape}, but the mask has shape {mask.shape}")
+
+    if len(mask.shape) == d:
+        x_known = repeat(x_known, '... -> b ...', b=num_images)
+
+    if labels is not None:
+        if labels.shape[-1:] != precond.label_dim:
+            raise ValueError(f"The model requires labels with {precond.label_dim} dimensions, but the given label has shape {labels.shape}")
+
+        if len(labels).shape == 1:
+            labels = repeat(labels, '... -> b ...', b=num_images)
+
+    if record_trajectory:
+        traj = []
+
+    def on_begin_step(*, i, j, σ1, x_noisy_σ1, N, **locals):
+        x_known_σ1 = x_known + σ1 * N()
 
         if record_trajectory:
-            traj[i] = x_next
-            i += 1
+            frame = dict(
+                    i=i,
+                    j=j,
+                    σ1=σ1.item(),
+                    x_known_σ1=x_known_σ1,
+                    x_noisy_σ1_before_mask=x_noisy_σ1.clone(),
+            )
+            traj.append(frame)
 
-        x_prev = x_cur
-        x_cur = x_next
+        # Modify this tensor in place, so that the changes are seen by the 
+        # solver.  Note that we don't need to record this tensor now; it'll get 
+        # recorded at the end of the step.
+        x_noisy_σ1 *= (1 - mask)
+        x_noisy_σ1 += x_known_σ1 * mask
+
+    def on_end_step(*, σ2, σ3, **locals):
+        if record_trajectory:
+            traj[-1].update(
+                    σ2=σ2.item(),
+                    σ3=σ3.item(),
+
+                    x_noisy_σ1_after_mask=locals['x_noisy_σ1'],
+                    x_clean_σ1=locals['x_clean_σ1'],
+
+                    x_noisy_σ2=locals['x_noisy_σ2'],
+                    x_clean_σ2=locals['x_clean_σ2'],
+
+                    x_noisy_σ3=locals['x_noisy_σ3'],
+                    x_noisy_σ3_1st_order=locals['x_noisy_σ3_1st_order'],
+                    x_noisy_σ3_2nd_order=locals['x_noisy_σ3'] if σ3 > 0 else None,
+                    x_clean_σ3=locals['x_clean_σ3'] if σ3 > 0 else None,
+            )
+
+    x_inpaint = _heun_sde_solver(
+            precond=precond,
+            params=params,
+            num_images=num_images,
+            labels=labels,
+            rng=rng,
+
+            on_begin_step=on_begin_step,
+            on_end_step=on_end_step,
+            progress_bar=progress_bar,
+    )
 
     if record_trajectory:
-        x_out = traj
+        return x_inpaint, pl.DataFrame(traj)
     else:
-        x_out = x_cur
+        return x_inpaint
 
-    # On tensors this big, in-place operations are slightly faster.  It's a 
+
+@torch.inference_mode()
+def _heun_sde_solver(
+        *,
+        precond: KarrasPrecond,
+        labels: Optional[torch.Tensor] = None,
+        params: GenerateParams,
+        rng: np.random.Generator,
+        num_images: int,
+        on_begin_step: SolverHook = lambda **_: None,
+        on_end_step: SolverHook = lambda **_: None,
+        progress_bar: ProgressBarFactory = tquiet,
+):
+    """
+    Generate new images, using a model trained to denoise noisy images.
+
+    In technical terms, this function solves stochastic differential equations 
+    (SDEs) using Heun's method.  This is a second-order method, which means 
+    that the model is evaluated twice for each sampling step.  This extra 
+    evaluation allows bigger steps to be taken, so overall this method is more 
+    efficient than first-order methods.  The algorithm is based on:
+
+    - Algorithm 2 from [Karras2022]
+    - Algorithm 1 from [Lugmayr2022]
+
+    This function is not meant to be used directly by external callers.  
+    Instead, it's meant to implement the main logic for both the `generate()` 
+    and `inpaint()` functions.
+
+    Arguments:
+        precond:
+            The model that will be used to denoise the images.  The model 
+            should accept a noisy image and the amount of noise in the image, 
+            expressed as a standard deviation.  It should return the noise-free 
+            version of the image.
+
+            The model must also have attributes `x_shape` and `self_condition`, 
+            which respectively give the shape of the expected input, and 
+            whether or not self-conditioning is supported.
+
+        rng:
+            A pseudorandom number generator, used to generate noise during the 
+            sampling process.
+
+        num_images:
+            The number of images to generate.
+
+        on_begin_step:
+        on_end_step:
+            Functions that will be called at the beginning and end of each 
+            step, respectively.  The functions will be passed all of the local 
+            variables currently in use by the solver, as keyword arguments.  
+            In-place modifications to these values will affect the solver's 
+            behavior.
+
+            The main intended purpose of these functions is to record
+            diagnostic information, i.e. the intermediate images created during 
+            the generation process.  The `inpaint()` function also uses 
+            `on_begin_step()` to apply the mask.
+    """
+
+    assert not precond.training
+    device = _get_model_device(precond)
+    x_shape = num_images, *precond.x_shape
+    N = partial(_sample_normal, rng=rng, shape=x_shape, device=device)
+
+    # Each iteration makes use of 3 different noise levels:
+    # - σ1: the noise level at the start of the step
+    # - σ2: the noise level after churn is added
+    # - σ3: the noise level at the end of the step
+    #
+    # By default, σ1 and σ2 are the same.  If `params.S_churn` is non-zero, 
+    # though, σ2 will be greater than σ1.  σ3 is always the smallest of the 
+    # three.
+
+    # More nomenclature:
+    # - x_noisy_σ*: A generated image, with the specified amount of noise.  
+    #   Note that σ* is not the actual standard deviation of the image; it's 
+    #   just the standard deviation of the noise, so to get it you'd first have 
+    #   to subtract away the noise-free image.
+    # - x_clean_σ*: The denoised version of x_noisy_σ*, predicted by the given 
+    #   model.  Note that here, the σ suffix does not indicate the amount of 
+    #   noise in the image (which should be zero), but rather the amount of 
+    #   noise that was removed to make the clean image.
+
+    sigmas = _calc_sigma_schedule(params).to(device)
+    x_noisy_σ1 = sigmas[0] * N()
+    x_clean_σ1 = torch.zeros(x_shape, device=device)
+
+    def clean_from_noisy(x_noisy, σ, *, x_self_cond):
+        return torch.cat([
+            precond(
+                x_noisy[i:j], σ,
+                x_self_cond=x_self_cond[i:j],
+                label=labels[i:j] if labels is not None else None,
+            )
+            for i, j in _get_batch_indices(num_images, params.max_batch_size)
+        ])
+
+    for i, (σ1, σ3) in progress_bar(list(enumerate(pairwise(sigmas)))):
+        for j in range(params.resample_steps):
+            on_begin_step(**locals())
+
+            σ2, x_noisy_σ2 = _add_churn(rng, σ1, x_noisy_σ1, params)
+            assert σ3 < σ2
+
+            # It's not obvious why the standard deviation of:
+            #
+            #   x_noisy_σ2 + (σ3 - σ2) * dx_dσ2
+            #
+            # would be `σ3`.  However, we can arrive at this result by 
+            # carefully applying variance and covariance identities.  
+            # First, let's define some shorter variable names:
+            #
+            #   a = σ2
+            #   b = σ3
+            #   c = (b - a) / a
+            #
+            #   X = x_noisy_σ2
+            #   Y = x_clean_σ2
+            #   Z = x_noisy_σ2 + (σ3 - σ2) * dx_dσ2 = X + c (X - Y)
+            #
+            # We want to show that Var[Z] = b².
+            #
+            #   Var[Z] = Var[X + c (X - Y)]
+            #          = Var[X] + c² Var[X - Y] + 2c Cov[X, X - Y]
+            #          = Var[X] + c² (Var[X] + Var[Y] - 2 Cov[X, Y]) + 2c (Cov[X, X] - Cov[X, Y])
+            #
+            # Y is the noise-free image, so we can simplify the above 
+            # expression by substituting Var[Y] = Cov[X, Y] = 0.  We can also 
+            # substitute Cov[X, X] = Var[X]:
+            #
+            #   Var[Z] = Var[X] + c² Var[X] + 2c Var[X]
+            #          = Var[X] (1 + c² + 2c)
+            #
+            # Now recall that Var[X] = a²:
+            #
+            #   Var[Z] = a² (1 + (b - a)²/a² + 2(b - a)/a)
+            #          = a² + (b - a)² + 2a (b - a)
+            #          = a² + (b² - 2ab + a²) + 2ab - 2a²
+            #          = b²
+            # Q.E.D.
+
+            x_clean_σ2 = clean_from_noisy(
+                    x_noisy_σ2, σ2,
+                    x_self_cond=x_clean_σ1,
+            )
+            dx_dσ2 = (x_noisy_σ2 - x_clean_σ2) / σ2
+            x_noisy_σ3 = x_noisy_σ3_1st_order = x_noisy_σ2 + (σ3 - σ2) * dx_dσ2
+
+            if σ3 > 0:
+                x_clean_σ3 = clean_from_noisy(
+                        x_noisy_σ3, σ3,
+                        x_self_cond=x_clean_σ2,
+                )
+                dx_dσ3 = (x_noisy_σ3 - x_clean_σ3) / σ3
+                x_noisy_σ3 = x_noisy_σ2 + (σ3 - σ2) * (dx_dσ2 + dx_dσ3) / 2
+
+            on_end_step(**locals())
+
+            # Prepare for the next iteration.  If we're going to take a 
+            # resampling step, we need to add noise back to the image to 
+            # restore its previous noise level.  Otherwise, we just need to 
+            # relabel some variables.
+
+            if j < params.resample_steps - 1:
+                x_noisy_σ1 = x_noisy_σ3 + (σ1**2 - σ3**2).sqrt() * N()
+            else:
+                x_noisy_σ1 = x_noisy_σ3
+
+            x_clean_σ1 = x_clean_σ3 if σ3 > 0 else x_clean_σ2
+
+    x_out = x_clean_σ2
+
+    # On very large tensors, in-place operations are slightly faster.  It's a 
     # minor effect, though.
     x_out.mul_(params.unnormalize_std)
     x_out.add_(params.unnormalize_mean)
@@ -327,7 +647,7 @@ def generate(
     return x_out
 
 def _calc_sigma_schedule(params):
-    n = params.time_steps
+    n = params.noise_steps
     i = torch.arange(n + 1)
     inv_rho = 1 / params.rho
     σ_max = params.sigma_max
@@ -342,18 +662,47 @@ def _calc_sigma_schedule(params):
 
     return sigmas
 
-def _add_churn(rng, t_cur, x_cur, params):
-    if params.S_min <= t_cur <= params.S_max:
-        gamma = min(params.S_churn / params.time_steps, sqrt(2) - 1)
-    else:
-        gamma = 0
+def _add_churn(rng, σ_cur, x_cur, params):
+    if not (params.S_min <= σ_cur <= params.S_max):
+        return σ_cur, x_cur
 
-    t_churn = t_cur * (1 + gamma)
-    eps_churn = rng.normal(
-            scale=sqrt(t_churn**2 - t_cur**2),
-            size=x_cur.shape,
+    gamma = min(params.S_churn / params.noise_steps, sqrt(2) - 1)
+    σ_churn = σ_cur * (1 + gamma)
+    eps_churn = _sample_normal(
+            rng,
+            mean=0,
+            std=sqrt(σ_churn**2 - σ_cur**2),
+            shape=x_cur.shape,
+            device=x_cur.device,
     )
-    eps_churn = torch.from_numpy(eps_churn).float().to(x_cur.device)
 
-    return t_churn, x_cur + eps_churn
+    return σ_churn, x_cur + eps_churn
 
+def _sample_normal(rng, *, mean=0, std=1, shape, device):
+    z = rng.normal(loc=mean, scale=std, size=shape)
+    return torch.from_numpy(z).float().to(device)
+
+def _sqrt_zero_ok(x):
+    return torch.sqrt(x) if x > 0 else 0
+
+def _get_batch_indices(num_images, max_batch_size):
+    if max_batch_size is None:
+        yield 0, num_images
+        return
+
+    i = 0
+    while i < num_images:
+        j = min(i + max_batch_size, num_images)
+        yield i, j
+        i = j
+
+def _get_model_device(model: nn.Module):
+    from itertools import chain
+
+    # For testing, I sometimes use "models" with no parameters, so it's 
+    # convenient for this case to be handled seamlessly.  `KarrasPrecond` has a 
+    # buffer, though, so we'll always find a device if we also look for those.
+    try:
+        return next(chain(model.parameters(), model.buffers())).device
+    except StopIteration:
+        return 'cpu'
