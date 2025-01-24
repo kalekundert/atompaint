@@ -427,8 +427,8 @@ def inpaint(
         # Modify this tensor in place, so that the changes are seen by the 
         # solver.  Note that we don't need to record this tensor now; it'll get 
         # recorded at the end of the step.
-        x_noisy_σ1 *= (1 - mask)
-        x_noisy_σ1 += x_known_σ1 * mask
+        x_noisy_σ1 *= mask
+        x_noisy_σ1 += x_known_σ1 * (1 - mask)
 
     def on_end_step(*, σ2, σ3, **locals):
         if record_trajectory:
