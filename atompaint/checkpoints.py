@@ -73,7 +73,8 @@ def load_model_weights(
         model.eval()
         model.requires_grad_(False)
 
-    model.load_state_dict(weights)
+    model.load_state_dict(weights, assign=True)
+    model.to(device)
 
 def extract_state_dict(
         state_dict: dict[str, Tensor],
