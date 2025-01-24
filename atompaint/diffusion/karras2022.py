@@ -6,6 +6,7 @@ import torch.nn as nn
 import polars as pl
 import numpy as np
 import sys
+import re
 
 from atompaint.metrics.neighbor_loc import (
         NeighborLocAccuracy, FrechetNeighborLocDistance,
@@ -463,6 +464,175 @@ def inpaint(
         return x_inpaint, pl.DataFrame(traj)
     else:
         return x_inpaint
+
+
+def load_expt_102_unet(*, lr=4, epoch=63, device=None):
+    from atompaint.checkpoints import load_model_weights, strip_prefix
+
+    def fix_keys(k):
+        k = strip_prefix(k, prefix='model.')
+        k = re.sub(r'^model\.blocks\.(\d+)\.', r'model.model.\1.', k)
+        k = re.sub(r'^model\.time_embedding', 'model.noise_embedding', k)
+        k = re.sub(r'\.time\.time_mlp', '.cond.mlp', k)
+        k = re.sub(r'\.time_mlp\.', '.cond_mlp.', k)
+        k = re.sub(r'\.activation\.', '.act.', k)
+        return k
+
+    ckpt_paths = {
+            (4, 63): 'expt_102/lr=p4-epoch=63-step=809152.ckpt',
+            (4, 69): 'expt_102/lr=p4-epoch=69-step=885010.ckpt',
+            (5, 99): 'expt_102/lr=p5-epoch=99-step=1264300.ckpt',
+    }
+    ckpt_xxh32s = {
+            (4, 63): '9b89217d',
+            (4, 69): '7920aea5',
+            (5, 99): 'b7304d0d',
+    }
+
+    try:
+        ckpt_path = ckpt_paths[lr, epoch]
+        ckpt_xxh32 = ckpt_xxh32s[lr, epoch]
+    except KeyError:
+        raise KeyError(f"no checkpoint available for lr={lr}, epoch={epoch}") from None
+
+    unet = make_expt_102_unet()
+    load_model_weights(
+            model=unet,
+            path=ckpt_path,
+            xxh32sum=ckpt_xxh32,
+            fix_keys=fix_keys,
+            device=device,
+    )
+    return unet
+
+def make_expt_102_unet():
+    from atompaint.autoencoders.semisym_unet import SemiSymUNet
+    from atompaint.field_types import make_fourier_field_types
+    from escnn.gspaces import rot3dOnR3
+    from functools import partial
+    from multipartial import multipartial, rows
+
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    ift_grid = so3.grid(type='thomson_cube', N=4)
+
+    def sym_head_factory(in_type, out_type, ift_grid):
+        import atompaint.layers as ap
+        yield from ap.sym_conv_bn_fourier_layer(
+                in_type,
+                out_type,
+                ift_grid=ift_grid,
+        )
+
+    def sym_block_factory(in_type, out_type, cond_dim, ift_grid):
+        from atompaint.autoencoders.sym_unet import SymUNetBlock
+        from atompaint.conditioning import LinearConditionedActivation
+        from atompaint.nonlinearities import first_hermite
+        from escnn.nn import TensorProductModule, FourierPointwise
+
+        return SymUNetBlock(
+                in_type,
+                cond_activation=LinearConditionedActivation(
+                    cond_dim=cond_dim,
+                    activation=TensorProductModule(out_type, out_type),
+                ),
+                out_activation=FourierPointwise(
+                    out_type,
+                    grid=ift_grid,
+                    function=first_hermite,
+                ),
+        )
+
+    def sym_downsample_factory(in_type):
+        import atompaint.layers as ap
+        return ap.sym_pool_conv_layer(in_type)
+
+    def latent_factory(in_type, cond_dim):
+        from atompaint.layers import UnwrapTensor
+        yield sym_block_factory(
+                in_type=in_type,
+                out_type=in_type,
+                cond_dim=cond_dim,
+                ift_grid=ift_grid,
+        )
+        yield UnwrapTensor()
+
+    def asym_tail_factory(in_channels, out_channels):
+        yield nn.ConvTranspose3d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                padding=0,
+        )
+
+    def asym_block_factory(in_channels, out_channels, cond_dim, attention=False):
+        import atompaint.autoencoders.asym_unet as ap
+
+        yield ap.AsymConditionedConvBlock(
+                in_channels,
+                out_channels,
+                cond_dim=cond_dim,
+        )
+
+        if attention:
+            yield ap.AsymAttentionBlock(
+                    out_channels,
+                    num_heads=2,
+                    channels_per_head=out_channels // 2,
+            )
+
+    def asym_upsample_factory(channels):
+        import atompaint.upsampling as ap
+        return ap.Upsample3d(
+                size_expr=lambda x: 2*x - 1,
+                mode='trilinear',
+        )
+
+    def noise_embedding(out_dim):
+        import atompaint.conditioning as ap
+
+        embed_dim = 4 * out_dim
+
+        yield ap.SinusoidalEmbedding(
+                out_dim=embed_dim,
+                min_wavelength=0.1,
+                max_wavelength=100,
+        )
+        yield nn.Linear(embed_dim, out_dim)
+        yield nn.ReLU()
+        
+    unet = SemiSymUNet(
+            img_channels=6,
+            encoder_types=make_fourier_field_types(
+                gspace,
+                channels=[2, 4, 8, 16],
+                max_frequencies=2,
+            ),
+
+            head_factory=partial(sym_head_factory, ift_grid=ift_grid),
+            tail_factory=asym_tail_factory,
+
+            encoder_factories=partial(
+                sym_block_factory,
+                ift_grid=ift_grid,
+            ),
+            decoder_factories=multipartial[:,1](
+                asym_block_factory,
+                attention=rows(False, False, True),
+            ),
+            latent_factory=latent_factory,
+
+            downsample_factory=sym_downsample_factory,
+            upsample_factory=asym_upsample_factory,
+
+            cond_dim=16,
+            noise_embedding=noise_embedding,
+    )
+    return KarrasPrecond(
+            unet,
+            x_shape=(6, 35, 35, 35),
+            sigma_data=1,
+    )
 
 
 @torch.inference_mode()

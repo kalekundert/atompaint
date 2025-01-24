@@ -46,6 +46,9 @@ class EvalModeCheckpointMixin:
 def get_artifact_dir():
     return Path(os.environ['AP_MODEL_WEIGHTS'])
 
+def has_artifact_dir():
+    return 'AP_MODEL_WEIGHTS' in os.environ
+
 def load_model_weights(
         model,
         path,

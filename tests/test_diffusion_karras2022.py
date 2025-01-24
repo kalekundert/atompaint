@@ -3,10 +3,12 @@ import torch.nn as nn
 import torch.testing
 import numpy as np
 import parametrize_from_file as pff
+import pytest
 
 from einops import repeat
 from scipy.stats import kstest, norm
 from dataclasses import dataclass
+from utils import require_apw
 
 with_py = pff.Namespace()
 
@@ -180,6 +182,22 @@ def test_karras_diffusion_forward_self_cond_empty_mask():
     # Run a forward pass.  The actual checks made by this test are in the 
     # `MockPrecond.forward()` method.
     model.forward(x)
+
+@require_apw
+@pytest.mark.parametrize('lr, epoch', [(4, 63), (4, 69), (5, 99)])
+def test_load_expt_102_unet(lr, epoch):
+    precond = _ap.load_expt_102_unet(lr=lr, epoch=epoch)
+
+    assert precond.x_shape == (6, 35, 35, 35)
+    assert not precond.label_dim
+    assert not precond.self_condition
+
+    # Just check that the model loads and runs without error.
+    x = torch.randn(1, *precond.x_shape)
+    σ = torch.randn(1, 1)
+    y = precond(x, σ)
+
+    assert y.shape == x.shape
 
 def test_generate_sigmas():
     # Check that every intermediate step in the diffusion process has the 

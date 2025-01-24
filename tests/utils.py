@@ -1,7 +1,9 @@
 import parametrize_from_file as pff
 import macromol_dataframe as mmdf
 import numpy as np
+import pytest
 
+from atompaint.checkpoints import has_artifact_dir
 from escnn.group import octa_group
 from pathlib import Path
 from io import StringIO
@@ -12,6 +14,11 @@ IMAGE_DIR = TEST_DIR / 'images'
 with_py = pff.Namespace()
 with_math = pff.Namespace('from math import *')
 with_ap = pff.Namespace('import atompaint as ap')
+
+require_apw = pytest.mark.skipif(
+        not has_artifact_dir(),
+        reason="requires real database and/or trained model weights",
+)
 
 def get_exact_rotations(group):
     """
