@@ -105,7 +105,7 @@ class SymResBlock(ResBlock):
         assert y.type == self.out_type
         return y
 
-def load_expt_72_resnet(*, device=None):
+def load_expt_72_resnet():
     from atompaint.checkpoints import load_model_weights, strip_prefix
 
     def rename_old_keys(k):
@@ -122,7 +122,6 @@ def load_expt_72_resnet(*, device=None):
             path='expt_72/padding=2-6A;angle=40deg;image-size=24A;job-id=40481465;epoch=49.ckpt',
             fix_keys=rename_old_keys,
             xxh32sum='e4b0330d',
-            device=device,
     )
     return classifier
 

@@ -284,7 +284,7 @@ class AsymViewPairClassifier(Module):
         assert x.dim() == 2
         return self.classifier(x)
 
-def load_expt_72_model(*, device=None):
+def load_expt_72_model():
 
     def rename_old_keys(k):
         return (
@@ -301,7 +301,6 @@ def load_expt_72_model(*, device=None):
             path='expt_72/padding=2-6A;angle=40deg;image-size=24A;job-id=40481465;epoch=49.ckpt',
             fix_keys=rename_old_keys,
             xxh32sum='e4b0330d',
-            device=device,
     )
     return classifier
 
@@ -320,7 +319,7 @@ def make_expt_72_model():
             classifier=AsymViewPairClassifier(mlp),
     )
 
-def load_expt_94_model(*, device=None):
+def load_expt_94_model():
 
     def rename_old_keys(k):
         return (
@@ -337,7 +336,6 @@ def load_expt_94_model(*, device=None):
             path='expt_94/block=gamma;channels=log-16;image-size=15A;job-id=48156726;epoch=99.ckpt',
             fix_keys=rename_old_keys,
             xxh32sum='ec925b15',
-            device=device,
     )
     return classifier
 

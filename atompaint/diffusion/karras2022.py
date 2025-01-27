@@ -466,7 +466,7 @@ def inpaint(
         return x_inpaint
 
 
-def load_expt_102_unet(*, lr=4, epoch=63, device=None):
+def load_expt_102_unet(*, lr=5, epoch=99):
     from atompaint.checkpoints import load_model_weights, strip_prefix
 
     def fix_keys(k):
@@ -501,7 +501,6 @@ def load_expt_102_unet(*, lr=4, epoch=63, device=None):
             path=ckpt_path,
             xxh32sum=ckpt_xxh32,
             fix_keys=fix_keys,
-            device=device,
     )
     return unet
 

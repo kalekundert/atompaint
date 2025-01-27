@@ -54,7 +54,6 @@ def load_model_weights(
         path,
         *,
         fix_keys: Callable[[str], str] = identity,
-        device=None,
         xxh32sum: Optional[str] = None,
         mode: Literal['eval', 'train'] = 'eval',
 ):
@@ -66,15 +65,26 @@ def load_model_weights(
         if xxh32sum != actual_xxh32sum:
             raise RuntimeError(f"weights file has the wrong hash\n• path: {ckpt_path}\n• expected xxh32sum: {xxh32sum}\n• actual xxh32sum: {actual_xxh32sum}")
 
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    # It doesn't matter what device the tensors returned by `torch.load()` are 
+    # on.  `Module.load_state_dict()` copies the values of the these tensors 
+    # into the corresponding tensors in the model, but without changing any 
+    # other aspect of the model tensors, so the model tensors will stay on 
+    # whatever device they started on.
+    #
+    # Since the device here doesn't matter, it makes sense to map everything to 
+    # the CPU.  By default, the tensors in the checkpoint will probably be 
+    # loaded onto the GPU, since I do my training on GPUs.  But I'd like the 
+    # code to run correctly even on systems without a GPU.  The CPU device is 
+    # always available, so it's 'a better target.
+
+    ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     weights = extract_state_dict(ckpt['state_dict'], fix_keys=fix_keys)
 
     if mode == 'eval':
         model.eval()
         model.requires_grad_(False)
 
-    model.load_state_dict(weights, assign=True)
-    model.to(device)
+    model.load_state_dict(weights)
 
 def extract_state_dict(
         state_dict: dict[str, Tensor],
