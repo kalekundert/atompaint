@@ -271,15 +271,15 @@ class KarrasPrecond(nn.Module):
 
 @dataclass(kw_only=True)
 class GenerateParams:
-    noise_steps: int = 18
+    # See Experiment #120 for details on how these parameters were chosen.
+    noise_steps: int = 98
     resample_steps: int = 1
 
-    sigma_min: float = 0.002
-    sigma_max: float = 80
-    rho: float = 7
+    sigma_min: float = 0.0278876278887711
+    sigma_max: float = 65.7645071048362
+    rho: float = 7.53983816992786
 
-    # These variable names come from [Karras2022].
-    S_churn: float = 0
+    S_churn: float = 12.3927241214305
     S_min: float = 0
     S_max: float = float('inf')
 
