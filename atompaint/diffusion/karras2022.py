@@ -57,7 +57,7 @@ class KarrasDiffusion(L.LightningModule):
         # multiples of 12.
         self.gen_params = gen_params or GenerateParams()
         self.gen_rng_factory = gen_rng_factory or (lambda: np.random.default_rng(0))
-        self.gen_label_factory = gen_label_factory or (lambda rng, b: None)
+        self.gen_label_factory = gen_label_factory
 
         if gen_metrics is not None:
             self.gen_metrics = gen_metrics
@@ -90,7 +90,7 @@ class KarrasDiffusion(L.LightningModule):
             }
 
     def forward(self, x):
-        x_clean = x['x_clean']; x_self_cond = None
+        x_clean = x['x_clean']
         noise = x['noise']
         rngs = x['rng']
         labels = x.get('label', None)
@@ -106,23 +106,16 @@ class KarrasDiffusion(L.LightningModule):
         sigma = torch.exp(t_norm).reshape(-1, 1, *([1] * d))
         x_noisy = x_clean + sigma * noise
 
-        if self.precond.self_condition:
-            x_self_cond = torch.zeros_like(x_clean)
-            mask = rngs.choice([True, False])
-
-            if mask.any():
-                with torch.inference_mode(), eval_mode(self.precond):
-                    x_self_cond_mask = self.precond(
-                            x_noisy[mask],
-                            sigma[mask],
-                            label=None if labels is None else labels[mask],
-                    )
-
-                x_self_cond_mask_iter = iter(x_self_cond_mask)
-
-                for i, mask_i in enumerate(mask):
-                    if mask_i:
-                        x_self_cond[i] = next(x_self_cond_mask_iter)
+        if not self.precond.self_condition:
+            x_self_cond = None
+        else:
+            x_self_cond = _make_x_self_cond(
+                    precond=self.precond,
+                    x_noisy=x_noisy,
+                    sigma=sigma,
+                    labels=labels,
+                    mask=rngs.choice([True, False]),
+            )
 
         x_pred = self.precond(
                 x_noisy,
@@ -165,18 +158,24 @@ class KarrasDiffusion(L.LightningModule):
         # number needed to get a stable result.
 
         rng = self.gen_rng_factory()
+        b = 12
 
         for i in trange(32, desc="Generative metrics", leave=True, file=sys.stdout):
+            if self.gen_label_factory:
+                labels = self.gen_label_factory(rng, b).to(self.device)
+            else:
+                labels = None
+
             x = generate(
                     precond=self.precond,
                     params=self.gen_params,
-                    labels=self.gen_label_factory(rng, 12),
-                    num_images=12,
+                    labels=labels,
+                    num_images=b,
                     rng=rng,
             )
 
             for metric in self.gen_metrics.values():
-                metric.to(x.device)
+                metric.to(self.device)
                 metric.update(x)
 
         for name, metric in self.gen_metrics.items():
@@ -312,10 +311,10 @@ def generate(
         record_trajectory: bool = False,
 ):
     if labels is not None:
-        if labels.shape[-1:] != precond.label_dim:
+        if labels.shape[-1] != precond.label_dim:
             raise ValueError(f"The model requires labels with {precond.label_dim} dimensions, but the given label has shape {labels.shape}")
 
-        if len(labels).shape == 1:
+        if len(labels.shape) == 1:
             labels = repeat(labels, '... -> b ...', b=num_images)
         if num_images != labels.shape[0]:
             raise ValueError(f"Requested {num_images} images, but provided {len(labels)} labels")
@@ -400,10 +399,10 @@ def inpaint(
         x_known = repeat(x_known, '... -> b ...', b=num_images)
 
     if labels is not None:
-        if labels.shape[-1:] != precond.label_dim:
+        if labels.shape[-1] != precond.label_dim:
             raise ValueError(f"The model requires labels with {precond.label_dim} dimensions, but the given label has shape {labels.shape}")
 
-        if len(labels).shape == 1:
+        if len(labels.shape) == 1:
             labels = repeat(labels, '... -> b ...', b=num_images)
 
     if record_trajectory:
@@ -631,6 +630,37 @@ def make_expt_102_unet():
             sigma_data=1,
     )
 
+
+def _make_x_self_cond(
+        *,
+        precond: KarrasPrecond,
+        x_noisy: torch.Tensor,
+        sigma: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        mask: torch.Tensor,
+) -> torch.Tensor:
+    with torch.inference_mode(), eval_mode(precond):
+        x_self_cond = torch.zeros_like(x_noisy)
+
+        # Need to specially handle this case, because the model will complain 
+        # if it gets an empty minibatch.
+        if not mask.any():
+            return x_self_cond
+
+        x_self_cond_mask = precond(
+                x_noisy[mask],
+                sigma[mask],
+                label=None if labels is None else labels[mask],
+                x_self_cond=x_self_cond[mask],
+        )
+
+        x_self_cond_mask_iter = iter(x_self_cond_mask)
+
+        for i, mask_i in enumerate(mask):
+            if mask_i:
+                x_self_cond[i] = next(x_self_cond_mask_iter)
+
+    return x_self_cond
 
 @torch.inference_mode()
 def _heun_sde_solver(
