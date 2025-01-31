@@ -13,7 +13,7 @@ from atompaint.metrics.neighbor_loc import (
 )
 from atompaint.utils import eval_mode
 from einops import reduce, repeat
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import partial
 from itertools import pairwise
 from pathlib import Path
@@ -56,7 +56,6 @@ class KarrasDiffusion(L.LightningModule):
         # The neighbor-location-based metrics require batch sizes that are 
         # multiples of 12.
         self.gen_params = gen_params or GenerateParams()
-        self.gen_params.batch_size = 12
         self.gen_rng_factory = gen_rng_factory or (lambda: np.random.default_rng(0))
         self.gen_label_factory = gen_label_factory or (lambda rng, b: None)
 
@@ -160,22 +159,21 @@ class KarrasDiffusion(L.LightningModule):
         #
         # [1]: https://pytorch-lightning.readthedocs.io/en/1.7.2/common/lightning_module.html#hooks
 
-        # We set the batch size to 12 in the constructor, so we're generating 
-        # 12 × 32 = 384 images.  Each image allows 4 updates, for a total of 
-        # 384 × 4 = 1536 updates.  In Experiment 97, I showed that this is 
-        # about the smallest number needed to get a stable result.
+        # We set the batch size to 12, so we're generating 12 × 32 = 384 
+        # images.  Each image allows 4 updates, for a total of 384 × 4 = 1536 
+        # updates.  In Experiment 97, I showed that this is about the smallest 
+        # number needed to get a stable result.
 
         rng = self.gen_rng_factory()
 
         for i in trange(32, desc="Generative metrics", leave=True, file=sys.stdout):
-            gen_params_i = replace(
-                    self.gen_params,
-                    labels=self.gen_label_factory(
-                        rng,
-                        self.gen_params.batch_size,
-                    ),
+            x = generate(
+                    precond=self.precond,
+                    params=self.gen_params,
+                    labels=self.gen_label_factory(rng, 12),
+                    num_images=12,
+                    rng=rng,
             )
-            x = generate(rng, self.precond, gen_params_i)
 
             for metric in self.gen_metrics.values():
                 metric.to(x.device)
