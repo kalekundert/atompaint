@@ -236,23 +236,21 @@ class SinusoidalEmbedding(nn.Module):
         """
         Arguments:
             t: torch.Tensor
-                A 1D tensor of diffusion timepoints.  Typically, the values 
-                in this tensor make up one minibatch.
+                An tensor of "timepoints" to embed, of dimension (..., T).
 
         Returns:
-            A 2D tensor of dimension (B, D):
+            A 2D tensor of dimension (..., T, D):
 
-            - B: minibatch size
+            - T: number of timepoints to embed, i.e. the last dimension of the 
+              input tensor.
             - D: output embedding size, i.e. the *out_dim* argument provided to 
               the constructor.
 
             Earlier positions in the output embedding change rapidly as a 
             function of the input index, while later positions change slowly.  
-            This embedding is typically added to whatever input data is 
-            associated with each index (images, in this project).
+            This embedding is typically added or concatenated to whatever input 
+            data is associated with each timepoint.
         """
-        assert len(t.shape) == 1
-
         freq = tau / torch.logspace(
                 start=log2(self.min_wavelength),
                 end=log2(self.max_wavelength),
@@ -260,7 +258,7 @@ class SinusoidalEmbedding(nn.Module):
                 base=2,
                 device=t.device,
         )
-        theta = torch.outer(t, freq)
+        theta = torch.einsum('...t,w->...tw', t, freq)
         return torch.cat((torch.sin(theta), torch.cos(theta)), dim=-1)
 
 class FourierConditionedActivation(nn.Module):

@@ -145,7 +145,7 @@ def test_add_condition_to_image():
 
     torch.testing.assert_close(xy, expected)
 
-def test_sinusoidal_positional_embedding():
+def test_sinusoidal_positional_embedding_1d():
     emb = ap.SinusoidalEmbedding(4, max_wavelength=8)
     t = torch.arange(9)
     t_emb = emb(t)
@@ -161,6 +161,30 @@ def test_sinusoidal_positional_embedding():
             [sin(3*tau/4),  sin(7*tau/8), cos(3*tau/4), cos(7*tau/8)],
             [sin(0),        sin(0),       cos(0),       cos(0)],
     ], dtype=t_emb.dtype)
+
+    torch.testing.assert_close(t_emb, expected)
+
+def test_sinusoidal_positional_embedding_2d():
+    emb = ap.SinusoidalEmbedding(4, max_wavelength=8)
+    t = torch.tensor([
+        [0, 1, 2, 3],
+        [4, 5, 6, 7],
+    ])
+    t_emb = emb(t)
+
+    expected = torch.tensor(
+            [[[sin(0),        sin(0),       cos(0),       cos(0)],
+              [sin(1*tau/4),  sin(1*tau/8), cos(1*tau/4), cos(1*tau/8)],
+              [sin(2*tau/4),  sin(2*tau/8), cos(2*tau/4), cos(2*tau/8)],
+              [sin(3*tau/4),  sin(3*tau/8), cos(3*tau/4), cos(3*tau/8)]],
+
+             [[sin(0),        sin(4*tau/8), cos(0),       cos(4*tau/8)],
+              [sin(1*tau/4),  sin(5*tau/8), cos(1*tau/4), cos(5*tau/8)],
+              [sin(2*tau/4),  sin(6*tau/8), cos(2*tau/4), cos(6*tau/8)],
+              [sin(3*tau/4),  sin(7*tau/8), cos(3*tau/4), cos(7*tau/8)]]],
+
+            dtype=t_emb.dtype,
+    )
 
     torch.testing.assert_close(t_emb, expected)
 
