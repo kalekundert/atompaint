@@ -84,7 +84,6 @@ def test_karras_diffusion_forward_self_cond():
     # The first call is in eval mode, and only includes the first and third 
     # images (the second was "randomly" excluded from self-conditioning).
     assert not precond.calls[0].training
-    assert precond.calls[0].x_self_cond is None
 
     torch.testing.assert_close(
             precond.calls[0].x_noisy,
@@ -93,6 +92,10 @@ def test_karras_diffusion_forward_self_cond():
     torch.testing.assert_close(
             precond.calls[0].sigma,
             repeat(torch.tensor([.1, .3]), 'b -> b 1 1 1 1'),
+    )
+    torch.testing.assert_close(
+            precond.calls[0].x_self_cond,
+            torch.zeros((2, 1, 2, 2, 2)),
     )
     torch.testing.assert_close(
             precond.calls[0].label,
