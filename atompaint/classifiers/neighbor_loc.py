@@ -1,4 +1,4 @@
-import lightning.pytorch as pl
+import lightning.pytorch as L
 import torch.nn.functional as F
 import torchyield as ty
 import torch
@@ -10,7 +10,7 @@ from atompaint.field_types import (
 )
 from atompaint.layers import (
         sym_conv_layer, sym_conv_bn_fourier_layer, sym_conv_bn_gated_layer,
-        sym_linear_fourier_layer
+        sym_linear_fourier_layer, flatten_base_space,
 )
 from atompaint.nonlinearities import leaky_hard_shrink, first_hermite
 from atompaint.checkpoints import (
@@ -33,7 +33,7 @@ from pipeline_func import f, X
 from typing import Iterable, Optional
 from torchyield import Layer, LayerFactory
 
-class ClassificationTask(EvalModeCheckpointMixin, pl.LightningModule):
+class ClassificationTask(EvalModeCheckpointMixin, L.LightningModule):
 
     def __init__(self, model, *, num_classes):
         super().__init__()
@@ -138,7 +138,7 @@ class SymViewPairEncoder(Module):
         y0 = self.encoder(x[:,0])
         y1 = self.encoder(x[:,1])
 
-        return _flatten_base_space(tensor_directsum([y0, y1]))
+        return flatten_base_space(tensor_directsum([y0, y1]))
 
     @property
     def in_type(self):
@@ -865,38 +865,3 @@ def make_fourier_mlp_field_types(
         max_frequencies=max_frequencies,
     )
 
-def _flatten_base_space(geom_tensor):
-    """
-    Remove the spatial dimensions from the given geometric tensor.
-
-    All of the spatial dimensions in the input must be of size 1, so they can 
-    be removed without losing information or changing the size of any other 
-    dimension.  If this condition is not met, an assertion error will be 
-    raised.
-
-    The return value is still a geometric tensor, but with a 0D base space (see 
-    `no_base_space()`) instead of whatever the original base space was.  The 
-    fiber representations are unchanged.
-    """
-
-    # TODO: I'd like to contribute this as a method of the `GeometricTensor` 
-    # class.
-    tensor = geom_tensor.tensor
-    in_type = geom_tensor.type
-    spatial_dims = in_type.gspace.dimensionality
-
-    assert geom_tensor.coords is None
-    # If you get this error; it's because your convolutional layers are not 
-    # sized to your input properly.
-    assert all(x == 1 for x in tensor.shape[-spatial_dims:])
-
-    out_shape = tensor.shape[:-spatial_dims]
-    out_type = FieldType(
-            no_base_space(in_type.gspace.fibergroup),
-            in_type.representations,
-    )
-
-    return GeometricTensor(
-            tensor.reshape(out_shape),
-            out_type,
-    )

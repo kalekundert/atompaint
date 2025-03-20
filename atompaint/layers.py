@@ -12,6 +12,7 @@ from escnn.nn import (
         FourierPointwise, GatedNonLinearity1, NormNonLinearity,
         PointwiseAvgPoolAntialiased3D,
 )
+from escnn.gspaces import no_base_space
 
 class WrapTensor(nn.Module):
 
@@ -253,4 +254,38 @@ def invariant_fourier_pool_layer(
     yield nn.Flatten()
 
 
+def flatten_base_space(geom_tensor):
+    """
+    Remove the spatial dimensions from the given geometric tensor.
 
+    All of the spatial dimensions in the input must be of size 1, so they can 
+    be removed without losing information or changing the size of any other 
+    dimension.  If this condition is not met, an assertion error will be 
+    raised.
+
+    The return value is still a geometric tensor, but with a 0D base space (see 
+    `no_base_space()`) instead of whatever the original base space was.  The 
+    fiber representations are unchanged.
+    """
+
+    # TODO: I'd like to contribute this as a method of the `GeometricTensor` 
+    # class.
+    tensor = geom_tensor.tensor
+    in_type = geom_tensor.type
+    spatial_dims = in_type.gspace.dimensionality
+
+    assert geom_tensor.coords is None
+    # If you get this error; it's because your convolutional layers are not 
+    # sized to your input properly.
+    assert all(x == 1 for x in tensor.shape[-spatial_dims:])
+
+    out_shape = tensor.shape[:-spatial_dims]
+    out_type = FieldType(
+            no_base_space(in_type.gspace.fibergroup),
+            in_type.representations,
+    )
+
+    return GeometricTensor(
+            tensor.reshape(out_shape),
+            out_type,
+    )
