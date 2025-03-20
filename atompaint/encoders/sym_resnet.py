@@ -24,7 +24,7 @@ from functools import partial
 from multipartial import multipartial, rows
 from pipeline_func import f, X
 
-from typing import Optional
+from typing import Optional, Union, Literal
 from atompaint.type_hints import ConvFactory, Grid
 
 def conv1x1x1(in_type, out_type):
@@ -310,7 +310,7 @@ def make_gamma_block(
         in_type: FieldType,
         out_type: FieldType,
         *,
-        mid_type: Optional[FieldType] = None,
+        mid_type: Union[FieldType, Literal['in', 'out']] = 'in',
         pool_factor: int,
         ift_grid: Grid,
 ):
@@ -318,8 +318,10 @@ def make_gamma_block(
     # of tensor product and first Hermite Fourier activations worked 
     # particularly well.
 
-    if mid_type is None:
+    if mid_type == 'in':
         mid_type = in_type
+    elif mid_type == 'out':
+        mid_type = out_type
 
     if pool_factor == 1:
         pool = []
