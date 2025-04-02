@@ -1,6 +1,8 @@
 import torchyield as ty
+import torch.nn as nn
 
 from atompaint.field_types import make_trivial_field_type
+from atompaint.utils import identity
 from escnn.nn import FieldType, GeometricTensor
 from torch import Tensor
 from itertools import pairwise
@@ -13,6 +15,7 @@ from torchyield import LayerFactory
 
 T = TypeVar('T')
 ChannelSchedule: TypeAlias = Callable[[T, T, int], Iterable[T]]
+LayerWrapper: TypeAlias = Callable[[nn.Module], nn.Module]
 
 def early_schedule(in_ch, out_ch, n):
     return [in_ch] + n * [out_ch]
@@ -38,6 +41,7 @@ class Encoder(ty.FrozenSequential):
             tail_factory: Optional[LayerFactory] = None,
             block_factories: list[list[LayerFactory]],
             block_kwargs: Optional[tuple[str, str]] = None,
+            layer_wrapper: LayerWrapper = identity,
             verbose: bool = False,
     ):
         """
@@ -99,7 +103,7 @@ class Encoder(ty.FrozenSequential):
             if tail_factory:
                 yield from ty.modules_from_layers(tail)
 
-        layers = iter_layers()
+        layers = map(layer_wrapper, iter_layers())
 
         if verbose:
             layers = ty.verbose(layers)
@@ -117,6 +121,7 @@ class Decoder(Encoder):
             tail_factory: Optional[LayerFactory] = None,
             block_factories: list[list[LayerFactory]],
             block_kwargs: Optional[tuple[str, str]] = None,
+            layer_wrapper: LayerWrapper = identity,
             verbose: bool = False,
     ):
         # This is a very thin wrapper around `Encoder`, which really is 
@@ -130,6 +135,7 @@ class Decoder(Encoder):
                 tail_factory=tail_factory,
                 block_factories=block_factories,
                 block_kwargs=block_kwargs,
+                layer_wrapper=layer_wrapper,
                 verbose=verbose,
         )
 
@@ -143,11 +149,12 @@ class SymEncoder(Encoder):
             *,
             in_channels: int,
             field_types: Iterable[FieldType],
+            channel_schedule: ChannelSchedule = early_schedule,
             head_factory: Optional[LayerFactory] = None,
             tail_factory: Optional[LayerFactory] = None,
             block_factories: list[list[LayerFactory]],
             block_kwargs: Optional[tuple[str, str]] = None,
-            channel_schedule: ChannelSchedule = early_schedule,
+            layer_wrapper: LayerWrapper = identity,
             verbose: bool = False,
     ):
         field_types = list(field_types)
@@ -163,6 +170,7 @@ class SymEncoder(Encoder):
                 tail_factory=tail_factory,
                 block_factories=block_factories,
                 block_kwargs=block_kwargs,
+                layer_wrapper=layer_wrapper,
                 verbose=verbose,
         )
 
@@ -180,11 +188,12 @@ class SymDecoder(Decoder):
             *,
             field_types: Iterable[FieldType],
             out_channels: int,
+            channel_schedule: ChannelSchedule = late_schedule,
             head_factory: Optional[LayerFactory] = None,
             tail_factory: Optional[LayerFactory] = None,
             block_factories: list[list[LayerFactory]],
             block_kwargs: Optional[tuple[str, str]] = None,
-            channel_schedule: ChannelSchedule = late_schedule,
+            layer_wrapper: LayerWrapper = identity,
             verbose: bool = False,
     ):
         field_types = list(field_types)
@@ -200,6 +209,7 @@ class SymDecoder(Decoder):
                 tail_factory=tail_factory,
                 block_factories=block_factories,
                 block_kwargs=block_kwargs,
+                layer_wrapper=layer_wrapper,
                 verbose=verbose,
         )
 

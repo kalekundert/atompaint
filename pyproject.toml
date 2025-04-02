@@ -14,6 +14,7 @@ classifiers = [
   'Programming Language :: Python :: 3',
 ]
 dependencies = [
+  'blosum',
   'docopt',
   'einops',
   'escnn @ git+https://github.com/kalekundert/escnn@0ac580d36ac682e8bae8a37192259f89d478f230',
@@ -21,6 +22,7 @@ dependencies = [
   'macromol_dataframe',
   'macromol_gym_pretrain',
   'macromol_gym_unsupervised',
+  'macromol_voxelize',
   'more_itertools',
   'multipartial',
   'numpy',
@@ -32,6 +34,7 @@ dependencies = [
   'torchyield',
   'tqdm',
   'tquiet',
+  'visible_residues',
   'xxhash',
 ]
 
@@ -70,6 +73,7 @@ exclude = ['_*.py']
 [tool.pytest.ini_options]
 addopts = "--doctest-modules --doctest-glob='*.rst'"
 doctest_optionflags = 'NORMALIZE_WHITESPACE'
+norecursedirs = ['resources']
 filterwarnings = [
   'ignore:.*Lazy modules are a new feature.*:UserWarning:torch.nn.modules.lazy',
   'ignore:Deprecated call to `pkg_resources.declare_namespace:DeprecationWarning',
