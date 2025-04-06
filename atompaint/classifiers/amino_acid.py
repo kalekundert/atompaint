@@ -238,6 +238,7 @@ def make_amino_acid_coords(
     # the residue id to keep the whole algorithm deterministic.
     atoms = assign_residue_ids(atoms, maintain_order=True)
     atoms = balance_amino_acids(rng, atoms, amino_acids)
+    atoms = remove_ambiguous_labels(atoms)
 
     visible = sample_visible_residues(
             rng=rng,
@@ -447,6 +448,18 @@ def balance_amino_acids(
             )
     )
     return atoms
+
+def remove_ambiguous_labels(atoms: pl.DataFrame):
+    # There are at least a few examples in the PDB (e.g. /6ycg/B/B/210) where a 
+    # single residue has multiple amino acid types, via alternate atom 
+    # locations.  There's no good way to assign a label to such residues, so we 
+    # have to filter them out.
+    return (
+            atoms
+            .filter(
+                pl.col('comp_id').n_unique().over('residue_id') == 1,
+            )
+    )
 
 @cache
 def get_amino_acid_labels(include_gap=False):
