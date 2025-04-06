@@ -290,16 +290,13 @@ def make_amino_acid_coords(
             .sort('residue_id')
     )
 
-    coords = coord_labels['x', 'y', 'z'].to_numpy()
-    labels = coord_labels['label'].to_numpy()
+    coords = coord_labels['x', 'y', 'z'].to_numpy().astype(np.float32)
+    labels = coord_labels['label'].to_numpy().astype(np.uint8)
 
     return {
-        #'image': x['image'],
+        'image': x['image'],
         'coords': coords,
         'labels': labels,
-
-        'zone_id': zone_id,
-        **x
     }
 
 def make_amino_acid_image(
@@ -370,15 +367,11 @@ def collate_amino_acid_coords(batch):
                 for x in batch
             ]),
             'labels': nested_tensor([
-                # As of torch==2.5.1, nested tensors seem to support signed 
-                # integers, but not unsigned integers.  So we have to 
-                # explicitly cast to a signed integer.
-                torch.from_numpy(x['labels'].copy().astype(np.int8))
-                for x in batch
-            ]),
-
-            'zone_id': default_collate([
-                x['zone_id']
+                # As of torch==2.5.1, nested tensors of unsigned integers can't 
+                # be collated.  But signed integers smaller than 64-bits can't 
+                # be used as the targets for cross-entropy loss.  So we have to 
+                # cast to 64-bit signed integers here.
+                torch.from_numpy(x['labels'].astype(np.int64))
                 for x in batch
             ]),
     }
