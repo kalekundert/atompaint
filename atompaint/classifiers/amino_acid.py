@@ -302,6 +302,7 @@ def make_amino_acid_coords_full(
 def make_amino_acid_coords(*args, **kwargs):
     x = make_amino_acid_coords_full(*args, **kwargs)
     return {
+        'image': x['image'],
         'coords': x['coords'],
         'labels': x['labels'],
     }
