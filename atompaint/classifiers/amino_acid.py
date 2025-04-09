@@ -205,7 +205,7 @@ class BlosumMetric(MeanMetric):
 
         super().update(scores, probs)
 
-def make_amino_acid_coords(
+def make_amino_acid_coords_full(
         db, db_cache, rng, zone_id,
         *,
         img_params: ImageParams,
@@ -294,12 +294,19 @@ def make_amino_acid_coords(
     labels = coord_labels['label'].to_numpy().astype(np.uint8)
 
     return {
-        'image': x['image'],
+        **x,
         'coords': coords,
         'labels': labels,
     }
 
-def make_amino_acid_image(
+def make_amino_acid_coords(*args, **kwargs):
+    x = make_amino_acid_coords_full(*args, **kwargs)
+    return {
+        'coords': x['coords'],
+        'labels': x['labels'],
+    }
+
+def make_amino_acid_image_full(
         db, db_cache, rng, zone_id,
         *,
         img_params: ImageParams,
@@ -308,7 +315,7 @@ def make_amino_acid_image(
         coord_type: Literal['CA', 'sidechain'] = 'CA',
         coord_radius_A: float = 1,
 ):
-    x = make_amino_acid_coords(
+    x = make_amino_acid_coords_full(
         db=db,
         db_cache=db_cache,
         rng=rng,
@@ -351,7 +358,15 @@ def make_amino_acid_image(
     img = np.concatenate((x['image'], img_aa))
     label = torch.tensor(label, dtype=torch.uint8)
 
-    return img, label
+    return {
+            **x,
+            'image': img,
+            'label': label,
+    }
+
+def make_amino_acid_image(*args, **kwargs):
+    x = make_amino_acid_image_full(*args, **kwargs)
+    return x['image'], x['label']
 
 def collate_amino_acid_coords(batch):
     from torch.utils.data import default_collate
