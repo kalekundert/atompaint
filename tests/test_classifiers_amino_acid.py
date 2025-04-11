@@ -2,6 +2,7 @@ import atompaint.classifiers.amino_acid as ap
 import torch
 import polars as pl
 import numpy as np
+import macromol_voxelize as mmvox
 
 from polars.testing import assert_frame_equal
 from pytest import approx
@@ -104,4 +105,103 @@ def test_balance_amino_acids():
 
     assert_frame_equal(actual, expected)
 
+def test_sample_uniform_crop():
+    from scipy.stats import chisquare
 
+    # The idea for this test is to (i) label each voxel with a unique id and 
+    # (ii) check that 
+
+    I = 5
+    C = 3
+
+    rng = np.random.default_rng(0)
+
+    img = np.full((1, I, I, I), 3**3)
+    img[0, 0:C, 0:C, 0:C] = np.arange(3**3).reshape((C, C, C))
+
+    counts = np.zeros(3**3)
+
+    for i in range(1000):
+        crop, _ = ap.sample_uniform_crop(
+                rng=rng,
+                img=img,
+                crop_length_voxels=C,
+        )
+        assert crop.shape == (1, C, C, C)
+
+        counts[crop[0, 0, 0, 0]] += 1
+
+    test = chisquare(counts)
+    assert test.pvalue > 0.05
+
+def test_sample_targeted_crop():
+    # The idea behind this test is to sample a bunch of crops, then to check 
+    # for the following properties:
+    #
+    # - All the crops are the right size.
+    # - All of the crops completely contain the target sphere.
+    # - The target sphere touches every edge of both the image and the crops, 
+    #   over all of the samples.
+
+    grid = mmvox.Grid(
+            length_voxels=(I := 11),
+            resolution_A=1,
+    )
+    img_params = mmvox.ImageParams(
+            grid=grid,
+            channels=1,
+    )
+    crop_length_voxels = C = 7
+    target_radius_A = 2
+
+    all_images = np.zeros((1, I, I, I))
+    all_crops = np.zeros((1, C, C, C))
+
+    for i in range(1000):
+        rng = np.random.default_rng(i)
+
+        L = grid.length_A / 2 - target_radius_A
+        target_center_A = rng.uniform(-L, L, size=3)
+
+        atom = pl.DataFrame([
+            dict(
+                x=target_center_A[0],
+                y=target_center_A[1],
+                z=target_center_A[2],
+                radius_A=target_radius_A,
+                channels=[0],
+            ),
+        ])
+
+        img = mmvox.image_from_all_atoms(atom, img_params)
+
+        assert img.shape == (1, I, I, I)
+        assert img.sum() == approx(1)
+
+        crop, _ = ap.sample_targeted_crop(
+                rng=rng,
+                img=img,
+                grid=grid,
+                crop_length_voxels=crop_length_voxels,
+                target_center_A=target_center_A,
+                target_radius_A=target_radius_A,
+        )
+
+        assert crop.shape == (1, C, C, C)
+        assert crop.sum() == approx(1)
+
+        all_images += img
+        all_crops += crop
+
+    for i in range(I):
+        assert all_images[0, i, :, :].sum() > 0
+        assert all_images[0, :, i, :].sum() > 0
+        assert all_images[0, :, :, i].sum() > 0
+
+    for c in range(C):
+        assert all_crops[0, c, :, :].sum() > 0
+        assert all_crops[0, :, c, :].sum() > 0
+        assert all_crops[0, :, :, c].sum() > 0
+
+    #np.save('all_images.npy', all_images)
+    #np.save('all_crops.npy', all_crops)

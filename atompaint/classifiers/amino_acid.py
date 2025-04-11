@@ -22,8 +22,9 @@ from blosum import BLOSUM
 from itertools import chain
 from more_itertools import one
 from functools import cache
+from math import ceil
 
-from typing import Optional, Literal
+from typing import Optional
 
 class OneStepAminoAcidClassificationTask(EvalModeCheckpointMixin, L.LightningModule):
 
@@ -212,7 +213,6 @@ def make_amino_acid_coords_full(
         amino_acids: pl.DataFrame,
         bounding_sphere: Optional[Sphere] = None,
         max_residues: int = 10,
-        coord_type: Literal['CA', 'sidechain'] = 'CA',
 ):
     """
     Arguments:
@@ -248,63 +248,54 @@ def make_amino_acid_coords_full(
             bounding_sphere=bounding_sphere,
     )
 
-    if coord_type == 'CA':
-        visible_ids = (
-                visible
-                .select(
-                    pl.struct(
-                        'residue_id',
-                        pl.col('alt_ids').struct.field('CA').alias('alt_id'),
-                    ),
-                )
-                .to_series()
-        )
-        coord_resns = (
-                atoms
-                .filter(
-                    pl.col('atom_id') == 'CA',
-                    pl.col('element') == 'C',
-                    pl.struct('residue_id', 'alt_id').is_in(visible_ids),
-                )
-        )
+    c_alphas = (
+            atoms
+            .lazy()
+            .filter(
+                pl.col('atom_id') == 'CA',
+                pl.col('element') == 'C',
+            )
+            .select(
+                residue_id=pl.col('residue_id'),
+                alt_id=pl.col('alt_id'),
+                comp_id=pl.col('comp_id'),
+                Cα_coord_A=pl.concat_arr('x', 'y', 'z'),
+            )
+    )
 
-    elif coord_type == 'sidechain':
-        coord_resns = (
-                visible
-                .join(
-                    atoms.select('residue_id', 'comp_id').unique(),
-                    on='residue_id',
-                )
-        )
-
-    else:
-        raise ValueError(f"unknown coordinate type: {coord_type}")
-
-    coord_labels = (
-            coord_resns
+    x['coord_labels'] = (
+            visible
+            .lazy()
+            .select(
+                residue_id=pl.col('residue_id'),
+                alt_id=pl.col('alt_ids').struct.field('CA'),
+                centroid_coord_A=pl.concat_arr('x', 'y', 'z'),
+                centroid_radius_A=pl.col('radius_A'),
+            )
             .join(
-                amino_acids.select('name3', 'label'),
+                c_alphas,
+                on=('residue_id', 'alt_id'),
+                nulls_equal=True,
+            )
+            .join(
+                amino_acids.lazy().select('name3', 'label'),
                 left_on='comp_id',
                 right_on='name3',
             )
             .sort('residue_id')
+            .collect()
     )
 
-    coords = coord_labels['x', 'y', 'z'].to_numpy().astype(np.float32)
-    labels = coord_labels['label'].to_numpy().astype(np.uint8)
+    assert len(visible) == len(x['coord_labels'])
 
-    return {
-        **x,
-        'coords': coords,
-        'labels': labels,
-    }
+    return x
 
 def make_amino_acid_coords(*args, **kwargs):
     x = make_amino_acid_coords_full(*args, **kwargs)
     return {
         'image': x['image'],
-        'coords': x['coords'],
-        'labels': x['labels'],
+        'coords': x['coord_labels']['Cα_coords_A'].to_numpy().astype(np.float32),
+        'labels': x['coord_labels']['labels'].to_numpy(),
     }
 
 def make_amino_acid_image_full(
@@ -313,8 +304,8 @@ def make_amino_acid_image_full(
         img_params: ImageParams,
         amino_acids: pl.DataFrame,
         bounding_sphere: Optional[Sphere] = None,
-        coord_type: Literal['CA', 'sidechain'] = 'CA',
         coord_radius_A: float = 1,
+        crop_length_voxels: Optional[int] = None,
 ):
     x = make_amino_acid_coords_full(
         db=db,
@@ -325,21 +316,14 @@ def make_amino_acid_image_full(
         amino_acids=amino_acids,
         bounding_sphere=bounding_sphere,
         max_residues=1,
-        coord_type=coord_type,
     )
+    have_label = len(x['coord_labels']) > 0
 
-    if len(x['coords']) == 0:
-        img_aa = np.zeros(
-                (1, *img_params.grid.shape),
-                dtype=x['image'].dtype,
-        )
-        label = len(amino_acids)
-
-    else:
+    if have_label:
         pseudoatoms = (
-                pl.DataFrame({'xyz': x['coords']})
+                x['coord_labels']
                 .select(
-                    pl.col('xyz')
+                    pl.col('Cα_coord_A')
                         .arr.to_struct(['x', 'y', 'z'])
                         .struct.unnest(),
                     radius_A=coord_radius_A,
@@ -354,15 +338,42 @@ def make_amino_acid_image_full(
                     fill_algorithm=mmvox.FillAlgorithm.FractionVoxel,
                 ),
         )
-        label = one(x['labels'])
+        label = one(x['coord_labels']['label'])
+
+    else:
+        img_aa = np.zeros(
+                (1, *img_params.grid.shape),
+                dtype=x['image'].dtype,
+        )
+        label = len(amino_acids)
 
     img = np.concatenate((x['image'], img_aa))
-    label = torch.tensor(label, dtype=torch.uint8)
+
+    if crop_length_voxels is not None:
+        if have_label:
+            img, crop_index = sample_targeted_crop(
+                    rng=rng,
+                    img=img,
+                    grid=img_params.grid,
+                    crop_length_voxels=crop_length_voxels,
+                    target_center_A=one(x['coord_labels']['centroid_coord_A'].to_numpy()),
+                    target_radius_A=one(x['coord_labels']['centroid_radius_A']),
+            )
+        else:
+            img, crop_index = sample_uniform_crop(
+                    rng=rng,
+                    img=img,
+                    crop_length_voxels=crop_length_voxels,
+            )
+
+    else:
+        crop_index = np.zeros(3)
 
     return {
             **x,
             'image': img,
             'label': label,
+            'crop_index': crop_index,
     }
 
 def make_amino_acid_image(*args, **kwargs):
@@ -470,6 +481,60 @@ def remove_ambiguous_labels(atoms: pl.DataFrame):
             )
     )
 
+def sample_uniform_crop(rng, img, crop_length_voxels):
+    assert len(img.shape) == 4
+    assert img.shape[1] == img.shape[2] == img.shape[3]
+    assert img.shape[1] > crop_length_voxels
+    assert img.shape[1] > 0
+    assert crop_length_voxels > 0
+
+    crop_corner = rng.integers(
+            low=np.zeros(3),
+            high=np.full(3, img.shape[1] - crop_length_voxels),
+            endpoint=True,
+    )
+    crop_slices = tuple(
+            slice(x, x + crop_length_voxels)
+            for x in crop_corner
+    )
+
+    return img[(slice(None), *crop_slices)], crop_corner
+
+def sample_targeted_crop(rng, img, grid, crop_length_voxels, target_center_A, target_radius_A):
+    assert len(img.shape) == 4
+    assert all(grid.length_voxels == x for x in img.shape[1:])
+    assert grid.length_voxels > crop_length_voxels
+    assert grid.length_voxels % 2 == 1
+    assert grid.length_voxels > 1
+    assert crop_length_voxels % 2 == 1
+    assert crop_length_voxels > 1
+    assert target_radius_A >= 0
+
+    target_voxel = mmvox.find_voxels_containing_coords(grid, target_center_A)
+    target_radius_voxels = int(ceil(target_radius_A / grid.resolution_A))
+
+    crop_corner_low = np.clip(
+            target_voxel - crop_length_voxels // 2,
+            0,
+            grid.length_voxels - crop_length_voxels,
+    )
+    crop_corner_high = np.clip(
+            target_voxel - target_radius_voxels,
+            0,
+            grid.length_voxels - crop_length_voxels,
+    )
+    crop_corner = rng.integers(
+            low=crop_corner_low,
+            high=crop_corner_high,
+            endpoint=True,
+    )
+    crop_slices = tuple(
+            slice(x, x + crop_length_voxels)
+            for x in crop_corner
+    )
+
+    return img[(slice(None), *crop_slices)], crop_corner
+
 @cache
 def get_amino_acid_labels(include_gap=False):
     names = [
@@ -500,7 +565,10 @@ def get_amino_acid_labels(include_gap=False):
     name1, name3 = zip(*names)
     return (
             pl.DataFrame({'name1': name1, 'name3': name3})
-            .with_row_index('label')
+            .select(
+                pl.int_range(pl.len(), dtype=pl.UInt8).alias('label'),
+                pl.all(),
+            )
     )
 
 @cache
