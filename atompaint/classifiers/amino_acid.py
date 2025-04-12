@@ -9,11 +9,9 @@ from atompaint.checkpoints import EvalModeCheckpointMixin
 from atompaint.type_hints import OptFactory
 from atompaint.metrics import TrainValTestMetrics
 from macromol_gym_unsupervised import (
-        ImageParams, make_unsupervised_image_sample, 
+        MakeSampleArgs, ImageParams, make_unsupervised_image_sample, 
 )
-from macromol_dataframe import (
-        assign_residue_ids,
-)
+from macromol_dataframe import assign_residue_ids
 from visible_residues import sample_visible_residues, Sphere
 from torch.nn import Module, CrossEntropyLoss
 from torch.optim import Adam
@@ -207,7 +205,7 @@ class BlosumMetric(MeanMetric):
         super().update(scores, probs)
 
 def make_amino_acid_coords_full(
-        db, db_cache, rng, zone_id,
+        sample: MakeSampleArgs,
         *,
         img_params: ImageParams,
         amino_acids: pl.DataFrame,
@@ -226,22 +224,18 @@ def make_amino_acid_coords_full(
             - `pick_prob`: The probability of including any particular amino 
               acid of this type in the dataset.
     """
-    x = make_unsupervised_image_sample(
-        db, db_cache, rng, zone_id,
-        img_params=img_params,
-    )
-
+    x = make_unsupervised_image_sample(sample, img_params=img_params)
     atoms = x['image_atoms_a']
 
     # It's important that the residue id assignment is deterministic (i.e.  
     # `maintain_order=True`), because at several points we rely on sorting by 
     # the residue id to keep the whole algorithm deterministic.
     atoms = assign_residue_ids(atoms, maintain_order=True)
-    atoms = balance_amino_acids(rng, atoms, amino_acids)
+    atoms = balance_amino_acids(sample.rng, atoms, amino_acids)
     atoms = remove_ambiguous_labels(atoms)
 
     visible = sample_visible_residues(
-            rng=rng,
+            rng=sample.rng,
             atoms=atoms,
             grid=img_params.grid,
             n=max_residues,
@@ -299,7 +293,7 @@ def make_amino_acid_coords(*args, **kwargs):
     }
 
 def make_amino_acid_image_full(
-        db, db_cache, rng, zone_id,
+        sample: MakeSampleArgs,
         *,
         img_params: ImageParams,
         amino_acids: pl.DataFrame,
@@ -308,14 +302,11 @@ def make_amino_acid_image_full(
         crop_length_voxels: Optional[int] = None,
 ):
     x = make_amino_acid_coords_full(
-        db=db,
-        db_cache=db_cache,
-        rng=rng,
-        zone_id=zone_id,
-        img_params=img_params,
-        amino_acids=amino_acids,
-        bounding_sphere=bounding_sphere,
-        max_residues=1,
+            sample,
+            img_params=img_params,
+            amino_acids=amino_acids,
+            bounding_sphere=bounding_sphere,
+            max_residues=1,
     )
     have_label = len(x['coord_labels']) > 0
 
@@ -352,7 +343,7 @@ def make_amino_acid_image_full(
     if crop_length_voxels is not None:
         if have_label:
             img, crop_index = sample_targeted_crop(
-                    rng=rng,
+                    rng=sample.rng,
                     img=img,
                     grid=img_params.grid,
                     crop_length_voxels=crop_length_voxels,
@@ -361,7 +352,7 @@ def make_amino_acid_image_full(
             )
         else:
             img, crop_index = sample_uniform_crop(
-                    rng=rng,
+                    rng=sample.rng,
                     img=img,
                     crop_length_voxels=crop_length_voxels,
             )

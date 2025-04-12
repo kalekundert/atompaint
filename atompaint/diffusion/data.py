@@ -7,28 +7,28 @@ from macromol_gym_unsupervised import (
 )
 from functools import partial
 
-def make_diffusion_sample(db, db_cache, rng, zone_id, *, img_params):
-    x = make_unsupervised_image_sample(
-            db, db_cache, rng, zone_id,
-            img_params=img_params,
-    )
-    noise = rng.normal(size=x['image'].shape).astype(x['image'].dtype)
+def make_diffusion_sample(sample, *, img_params):
+    x = make_unsupervised_image_sample(sample, img_params=img_params)
+    noise = sample.rng.normal(size=x['image'].shape).astype(x['image'].dtype)
 
     return dict(
             **x,
             noise=noise,
     )
 
-def make_diffusion_tensors(db, db_cache, rng, zone_id, *, img_params):
-    x = make_diffusion_sample(db, db_cache, rng, zone_id, img_params=img_params)
+def make_diffusion_tensors(sample, *, img_params):
+    x = make_diffusion_sample(sample, img_params=img_params)
     return dict(
             rng=x['rng'],
             x_clean=x['image'],
             noise=x['noise'],
     )
 
-def make_labeled_diffusion_tensors(db, db_cache, rng, zone_id, *, img_params):
-    x = make_diffusion_sample(db, db_cache, rng, zone_id, img_params=img_params)
+def make_labeled_diffusion_tensors(sample, *, img_params):
+    db = sample.db
+    db_cache = sample.db_cache
+
+    x = make_diffusion_sample(sample, img_params=img_params)
 
     label = _get_polymer_cath_label(
             x['image_atoms_a'],
