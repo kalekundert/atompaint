@@ -6,6 +6,7 @@ import macromol_voxelize as mmvox
 
 from polars.testing import assert_frame_equal
 from pytest import approx
+from utils import IMAGE_DIR, require_apw
 from math import log
 
 def test_blosum_metric():
@@ -109,7 +110,7 @@ def test_sample_uniform_crop():
     from scipy.stats import chisquare
 
     # The idea for this test is to (i) label each voxel with a unique id and 
-    # (ii) check that 
+    # (ii) check that those ids are sampled uniformly.
 
     I = 5
     C = 3
@@ -122,14 +123,16 @@ def test_sample_uniform_crop():
     counts = np.zeros(3**3)
 
     for i in range(1000):
-        crop, _ = ap.sample_uniform_crop(
+        crop = ap.sample_uniform_crop(
                 rng=rng,
-                img=img,
+                grid=mmvox.Grid(length_voxels=I, resolution_A=1),
                 crop_length_voxels=C,
         )
-        assert crop.shape == (1, C, C, C)
+        img_i = img[crop]
 
-        counts[crop[0, 0, 0, 0]] += 1
+        assert img_i.shape == (1, C, C, C)
+
+        counts[img_i[0, 0, 0, 0]] += 1
 
     test = chisquare(counts)
     assert test.pvalue > 0.05
@@ -178,20 +181,20 @@ def test_sample_targeted_crop():
         assert img.shape == (1, I, I, I)
         assert img.sum() == approx(1)
 
-        crop, _ = ap.sample_targeted_crop(
+        crop = ap.sample_targeted_crop(
                 rng=rng,
-                img=img,
                 grid=grid,
                 crop_length_voxels=crop_length_voxels,
                 target_center_A=target_center_A,
                 target_radius_A=target_radius_A,
         )
+        img_i = img[crop]
 
-        assert crop.shape == (1, C, C, C)
-        assert crop.sum() == approx(1)
+        assert img_i.shape == (1, C, C, C)
+        assert img_i.sum() == approx(1)
 
         all_images += img
-        all_crops += crop
+        all_crops += img_i
 
     for i in range(I):
         assert all_images[0, i, :, :].sum() > 0
@@ -205,3 +208,16 @@ def test_sample_targeted_crop():
 
     #np.save('all_images.npy', all_images)
     #np.save('all_crops.npy', all_crops)
+
+@require_apw
+def test_load_expt_131_classifier_1qjg_n38():
+    classifier = ap.load_expt_131_classifier()
+
+    img = np.load(IMAGE_DIR / '1qjg_n38.npz')['image']
+    img = torch.from_numpy(img).unsqueeze(0).float()
+
+    label_preds = classifier(img)[0]
+    label_pred = torch.argmax(label_preds).item()
+
+    assert classifier.amino_acids[label_pred, 'name1'] == 'N'
+

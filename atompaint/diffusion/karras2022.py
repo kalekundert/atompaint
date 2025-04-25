@@ -226,6 +226,8 @@ class KarrasPrecond(nn.Module):
         with, it's easiest to directly predict $x$.
         """
         assert x_noisy.shape[1:] == self.x_shape
+
+        sigma = sigma.reshape(-1, *([1] * (len(x_noisy.shape) - 1)))
         sigma_data = self.sigma_data
 
         c_skip = sigma_data ** 2 / (sigma ** 2 + sigma_data ** 2)
@@ -463,7 +465,7 @@ def inpaint(
         return x_inpaint
 
 
-def load_expt_102_unet(*, lr=5, epoch=99):
+def load_expt_102_unet(*, lr=5, epoch=99, mode='eval'):
     from atompaint.checkpoints import load_model_weights, strip_prefix
 
     def fix_keys(k):
@@ -498,6 +500,7 @@ def load_expt_102_unet(*, lr=5, epoch=99):
             path=ckpt_path,
             xxh32sum=ckpt_xxh32,
             fix_keys=fix_keys,
+            mode=mode,
     )
     return unet
 

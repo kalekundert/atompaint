@@ -12,7 +12,17 @@ class TrainValTestMetrics(Module):
             for loop in ['train_', 'val_', 'test_']
         })
 
-    def get(self, loop):
-        return self.metrics[f'{loop}_'].items()
+    def get(self, loop, metric=None):
+        metrics = self.metrics[f'{loop}_']
+
+        if metric is None:
+            return metrics.items()
+        else:
+            return metrics[metric]
+    
+    def log(self, module, loop, *args, **kwargs):
+        for name, metric in self.get(loop):
+            metric(*args, **kwargs)
+            self.log(f'{loop}/{name}', metric)
 
 

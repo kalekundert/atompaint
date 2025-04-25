@@ -4,6 +4,7 @@ import torchyield as ty
 import polars as pl
 import numpy as np
 import macromol_voxelize as mmvox
+import re
 
 from atompaint.checkpoints import EvalModeCheckpointMixin
 from atompaint.type_hints import OptFactory
@@ -13,7 +14,7 @@ from macromol_gym_unsupervised import (
 )
 from macromol_dataframe import assign_residue_ids
 from visible_residues import sample_visible_residues, Sphere
-from torch.nn import Module, CrossEntropyLoss
+from torch.nn import Module, CrossEntropyLoss, Flatten
 from torch.optim import Adam
 from torchmetrics import MeanMetric, Accuracy
 from blosum import BLOSUM
@@ -60,11 +61,11 @@ class OneStepAminoAcidClassificationTask(EvalModeCheckpointMixin, L.LightningMod
         y_hat = self.classifier(x)
         loss = self.loss(y_hat, y)
 
-        self.log(f'{loop}/loss', loss, on_epoch=True)
+        self.log(f'{loop}/loss', loss)
 
         for name, metric in self.metrics.get(loop):
             metric(y_hat, y)
-            self.log(f'{loop}/{name}', metric, on_step=False, on_epoch=True)
+            self.log(f'{loop}/{name}', metric)
 
         return loss
 
@@ -151,6 +152,25 @@ class TwoStepAminoAcidClassificationTask(EvalModeCheckpointMixin, L.LightningMod
         return self.optimizer
 
 
+class InvariantClassifier(Module):
+
+    def __init__(
+            self,
+            *,
+            encoder: ty.Layer,
+            invariant: ty.Layer,
+            mlp: ty.Layer,
+    ):
+        super().__init__()
+        self.encoder = ty.module_from_layer(encoder)
+        self.invariant = ty.module_from_layer(invariant)
+        self.mlp = ty.module_from_layer(mlp)
+
+    def forward(self, x):
+        z = self.encoder(x)
+        z = self.invariant(z)
+        return self.mlp(z)
+
 class CoordinateClassifier(Module):
     """
     Identify an amino acid given (i) the latent representation of an image and 
@@ -160,9 +180,9 @@ class CoordinateClassifier(Module):
     def __init__(
             self,
             *,
-            flatten_atoms: ty.LayerFactory,
-            embed_coords: ty.LayerFactory,
-            mlp: ty.LayerFactory,
+            flatten_atoms: ty.Layer,
+            embed_coords: ty.Layer,
+            mlp: ty.Layer,
     ):
         super().__init__()
         self.flatten_atoms = ty.module_from_layer(flatten_atoms)
@@ -289,7 +309,7 @@ def make_amino_acid_coords(*args, **kwargs):
     return {
         'image': x['image'],
         'coords': x['coord_labels']['Cα_coords_A'].to_numpy().astype(np.float32),
-        'labels': x['coord_labels']['labels'].to_numpy(),
+        'labels': x['coord_labels']['label'].to_numpy(),
     }
 
 def make_amino_acid_image_full(
@@ -339,32 +359,31 @@ def make_amino_acid_image_full(
         label = len(amino_acids)
 
     img = np.concatenate((x['image'], img_aa))
+    crop = None
 
     if crop_length_voxels is not None:
         if have_label:
-            img, crop_index = sample_targeted_crop(
+            crop = sample_targeted_crop(
                     rng=sample.rng,
-                    img=img,
                     grid=img_params.grid,
                     crop_length_voxels=crop_length_voxels,
                     target_center_A=one(x['coord_labels']['centroid_coord_A'].to_numpy()),
                     target_radius_A=one(x['coord_labels']['centroid_radius_A']),
             )
         else:
-            img, crop_index = sample_uniform_crop(
+            crop = sample_uniform_crop(
                     rng=sample.rng,
-                    img=img,
+                    grid=img_params.grid,
                     crop_length_voxels=crop_length_voxels,
             )
 
-    else:
-        crop_index = np.zeros(3)
+        img = img[crop]
 
     return {
             **x,
             'image': img,
             'label': label,
-            'crop_index': crop_index,
+            'crop': crop,
     }
 
 def make_amino_acid_image(*args, **kwargs):
@@ -472,28 +491,24 @@ def remove_ambiguous_labels(atoms: pl.DataFrame):
             )
     )
 
-def sample_uniform_crop(rng, img, crop_length_voxels):
-    assert len(img.shape) == 4
-    assert img.shape[1] == img.shape[2] == img.shape[3]
-    assert img.shape[1] > crop_length_voxels
-    assert img.shape[1] > 0
+def sample_uniform_crop(rng, grid, crop_length_voxels):
+    assert grid.length_voxels > crop_length_voxels
+    assert grid.length_voxels > 0
     assert crop_length_voxels > 0
 
     crop_corner = rng.integers(
             low=np.zeros(3),
-            high=np.full(3, img.shape[1] - crop_length_voxels),
+            high=np.full(3, grid.length_voxels - crop_length_voxels),
             endpoint=True,
     )
     crop_slices = tuple(
-            slice(x, x + crop_length_voxels)
+            slice(int(x), int(x + crop_length_voxels))
             for x in crop_corner
     )
 
-    return img[(slice(None), *crop_slices)], crop_corner
+    return slice(None), *crop_slices
 
-def sample_targeted_crop(rng, img, grid, crop_length_voxels, target_center_A, target_radius_A):
-    assert len(img.shape) == 4
-    assert all(grid.length_voxels == x for x in img.shape[1:])
+def sample_targeted_crop(rng, grid, crop_length_voxels, target_center_A, target_radius_A):
     assert grid.length_voxels > crop_length_voxels
     assert grid.length_voxels % 2 == 1
     assert grid.length_voxels > 1
@@ -520,11 +535,11 @@ def sample_targeted_crop(rng, img, grid, crop_length_voxels, target_center_A, ta
             endpoint=True,
     )
     crop_slices = tuple(
-            slice(x, x + crop_length_voxels)
+            slice(int(x), int(x + crop_length_voxels))
             for x in crop_corner
     )
 
-    return img[(slice(None), *crop_slices)], crop_corner
+    return slice(None), *crop_slices
 
 @cache
 def get_amino_acid_labels(include_gap=False):
@@ -563,19 +578,20 @@ def get_amino_acid_labels(include_gap=False):
     )
 
 @cache
-def get_unbiased_amino_acid_labels():
+def get_unbiased_amino_acid_labels(include_gap=False):
     return (
-            get_amino_acid_labels()
+            get_amino_acid_labels(include_gap=include_gap)
             .with_columns(pick_prob=1)
     )
 
 @cache
-def get_uniprot_amino_acid_labels():
+def get_uniprot_amino_acid_labels(include_gap=False):
     return (
-            get_amino_acid_labels()
+            get_amino_acid_labels(include_gap)
             .join(
                 get_uniprot_amino_acid_pick_probs(),
                 on='name1',
+                how='left',
             )
     )
 
@@ -611,12 +627,13 @@ def get_uniprot_amino_acid_pick_probs():
     })
 
 @cache
-def get_expt_107_amino_acid_labels():
+def get_expt_107_amino_acid_labels(include_gap=False):
     return (
-            get_amino_acid_labels()
+            get_amino_acid_labels(include_gap)
             .join(
                 get_expt_107_amino_acid_pick_probs(),
                 on='name1',
+                how='left',
             )
     )
 
@@ -664,4 +681,156 @@ def pick_probs_from_counts(df):
                 pick_prob=pl.col('weight') / pl.col('weight').max(),
             )
             .drop('weight')
+    )
+
+def find_gap_label(amino_acids, name1='-'):
+    gap = amino_acids.filter(name1=name1)
+
+    if len(gap) == 0:
+        return False, None
+
+    if len(gap) == 1:
+        return True, gap['label'].item()
+
+    raise AssertionError(f"multiple gap labels found: {gap['label'].to_list()}")
+
+
+def load_expt_131_classifier(*, mode='eval'):
+    from atompaint.checkpoints import load_model_weights, strip_prefix
+    from macromol_gym_unsupervised import ImageParams
+    from macromol_voxelize import Grid
+
+    def fix_keys(k):
+        k = strip_prefix(k, prefix='classifier.')
+        k = re.sub(r'^resnet\.', 'encoder.', k)
+        return k
+
+    ckpt_path = 'expt_131/image-size=11A;max-freq=1;resnet-channels=70,140,280;mlp-channels=128,64,21;block-repeats=1;job-id=64928963;epoch=78.ckpt'
+    ckpt_xxh32 = 'dc4d651f'
+
+    classifier = make_expt_131_classifier()
+    classifier.amino_acids = get_expt_107_amino_acid_labels(include_gap=True)
+    classifier.image_params = ImageParams(
+        grid=Grid(
+            length_voxels=11,
+            resolution_A=1.0,
+        ),
+        element_channels=[['C'], ['N'], ['O'], ['P'], ['S','SE'], ['*']],
+    )
+
+    load_model_weights(
+            model=classifier,
+            path=ckpt_path,
+            xxh32sum=ckpt_xxh32,
+            fix_keys=fix_keys,
+            mode=mode,
+    )
+
+    return classifier
+
+def make_expt_131_classifier():
+    from atompaint.encoders import SymEncoder, late_schedule
+    from atompaint.encoders.sym_resnet import SymResBlock
+    from atompaint.field_types import make_fourier_field_types
+    from atompaint.layers import Require1x1x1, UnwrapTensor, sym_conv_bn_fourier_layer
+    from atompaint.nonlinearities import first_hermite
+    from escnn.nn import FourierFieldType, R3Conv, FourierPointwise, TensorProductModule
+    from escnn.gspaces import rot3dOnR3
+    from multipartial import multipartial, cols
+    from functools import partial
+
+    gspace = rot3dOnR3()
+    so3 = gspace.fibergroup
+    so2_z = False, -1
+    ift_grid = so3.grid('thomson_cube', N=96//24)
+    ift_sphere_grid = so3.sphere_grid('thomson_cube', N=96//24)
+
+    def block_factory(in_type, out_type, *, downsample, ift_grid):
+        if downsample:
+            yield from sym_conv_bn_fourier_layer(
+                    in_type=in_type,
+                    out_type=out_type,
+                    kernel_size=3,
+                    stride=2,
+                    padding=1,
+                    ift_grid=ift_grid,
+            )
+
+        else:
+            assert in_type == out_type
+            yield SymResBlock(
+                in_type,
+                in_activation=TensorProductModule(in_type, in_type),
+                out_activation=FourierPointwise(
+                    in_type=out_type,
+                    grid=ift_grid,
+                    function=first_hermite,
+                ),
+            )
+
+    def invariant_factory(in_type, out_channels, max_freq):
+        mid_type = FourierFieldType(
+                gspace,
+                channels=out_channels,
+                bl_irreps=so3.bl_irreps(max_freq),
+                subgroup_id=so2_z,
+        )
+        out_type = FourierFieldType(
+                gspace,
+                channels=out_channels,
+                bl_irreps=so3.bl_irreps(0),
+                subgroup_id=so2_z,
+        )
+
+        yield R3Conv(in_type, mid_type, kernel_size=3, padding=0)
+        yield Require1x1x1()
+
+        # Skip the usual batch norm step.  The input doesn't have any 
+        # spatial dimensions by this point, so the statistics won't be very 
+        # reliable.
+
+        yield FourierPointwise(
+                in_type=mid_type,
+                out_type=out_type,
+                grid=ift_sphere_grid,
+                function=first_hermite,
+        )
+
+        yield UnwrapTensor()
+        yield Flatten()
+
+    encoder = SymEncoder(
+            in_channels=7,
+            channel_schedule=late_schedule,
+            field_types=make_fourier_field_types(
+                gspace=gspace,
+                channels=[7, 14, 28],
+                max_frequencies=1,
+            ),
+            head_factory=partial(
+                sym_conv_bn_fourier_layer,
+                ift_grid=ift_grid,
+                function=first_hermite,
+            ),
+            block_factories=multipartial[:,2](
+                block_factory,
+                downsample=cols(False, True),
+                ift_grid=ift_grid,
+            ),
+    )
+    invariant = invariant_factory(
+            in_type=encoder.out_type,
+            out_channels=128,
+            max_freq=1,
+    )
+    mlp = ty.mlp_layer(
+            ty.linear_relu_dropout_layer,
+            **ty.channels([128, 64, 21]),
+            dropout_p=0.2,
+    )
+
+    return InvariantClassifier(
+            encoder=encoder,
+            invariant=invariant,
+            mlp=mlp,
     )
