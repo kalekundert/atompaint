@@ -309,6 +309,7 @@ def generate(
         params: GenerateParams,
         num_images: int,
         rng: np.random.Generator,
+        device: Optional[torch.device] = None,
         progress_bar: ProgressBarFactory = tquiet,
         record_trajectory: bool = False,
 ):
@@ -352,6 +353,7 @@ def generate(
             num_images=num_images,
             labels=labels,
             rng=rng,
+            device=device,
 
             on_end_step=on_end_step,
             progress_bar=progress_bar,
@@ -372,9 +374,26 @@ def inpaint(
         params: InpaintParams,
         num_images: Optional[int] = None,
         rng: np.random.Generator,
+        device: Optional[torch.device] = None,
         progress_bar: ProgressBarFactory = tquiet,
         record_trajectory: bool = False,
 ):
+    """
+    Arguments:
+
+        mask:
+            A tensor the same shape as the image.  0 means to take the value 
+            from the known image, 1 means to fill in the value using the 
+            diffusion model.
+
+            Allowed dimensions.  SPATIAL indicates a variable number of dimensions.
+
+                [*SPATIAL]
+                [C, *SPATIAL]
+                [B, 1, *SPATIAL]
+                [B, C, *SPATIAL]
+                
+    """
     d = len(precond.x_shape)
 
     if x_known.shape[-d:] != precond.x_shape:
@@ -392,13 +411,13 @@ def inpaint(
             raise ValueError(f"Requested {num_images} images, but provided {len(x_known)} known images")
 
     if len(mask.shape) == d - 1:
-        mask = repeat(mask, '... -> b c ...', b=num_images, c=precond.x_shape[0])
-
-    if mask.shape[-d:] != precond.x_shape:
-        raise ValueError(f"The model requires images with shape {precond.x_shape}, but the mask has shape {mask.shape}")
+        mask = repeat(mask, '... -> b 1 ...', b=num_images)
 
     if len(mask.shape) == d:
-        x_known = repeat(x_known, '... -> b ...', b=num_images)
+        mask = repeat(mask, '... -> b ...', b=num_images)
+
+    if mask.shape[-(d-1):] != precond.x_shape[1:]:
+        raise ValueError(f"The model requires images with shape {precond.x_shape}, but the mask has shape {mask.shape}")
 
     if labels is not None:
         if labels.shape[-1] != precond.label_dim:
@@ -453,6 +472,7 @@ def inpaint(
             num_images=num_images,
             labels=labels,
             rng=rng,
+            device=device,
 
             on_begin_step=on_begin_step,
             on_end_step=on_end_step,
@@ -672,6 +692,7 @@ def _heun_sde_solver(
         labels: Optional[torch.Tensor] = None,
         params: GenerateParams,
         rng: np.random.Generator,
+        device: Optional[torch.device] = None,
         num_images: int,
         on_begin_step: SolverHook = lambda **_: None,
         on_end_step: SolverHook = lambda **_: None,
@@ -726,7 +747,7 @@ def _heun_sde_solver(
     """
 
     assert not precond.training
-    device = _get_model_device(precond)
+    device = device or _get_model_device(precond)
     x_shape = num_images, *precond.x_shape
     N = partial(_sample_normal, rng=rng, shape=x_shape, device=device)
 
@@ -847,7 +868,7 @@ def _heun_sde_solver(
     return x_out
 
 def _calc_sigma_schedule(params):
-    n = params.noise_steps
+    n = params.noise_steps;  assert n > 1
     i = torch.arange(n + 1)
     inv_rho = 1 / params.rho
     σ_max = params.sigma_max

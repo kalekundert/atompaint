@@ -80,6 +80,9 @@ filterwarnings = [
   'ignore:pkg_resources is deprecated as an API:DeprecationWarning',
   'ignore::DeprecationWarning:torch',
   'ignore::DeprecationWarning:autograd',
+  'ignore:Type google._upb._message.MessageMapContainer uses PyType_Spec with a metaclass that has custom tp_new. This is deprecated and will no longer be allowed in Python 3.14',
+  'ignore:Type google._upb._message.ScalarMapContainer uses PyType_Spec with a metaclass that has custom tp_new. This is deprecated and will no longer be allowed in Python 3.14',
+  "ignore:The 'val_dataloader' does not have many workers which may be a bottleneck.",
 ]
 
 [tool.coverage.run]

@@ -229,7 +229,7 @@ def make_amino_acid_coords_full(
         *,
         img_params: ImageParams,
         amino_acids: pl.DataFrame,
-        bounding_sphere: Optional[Sphere] = None,
+        sidechain_sphere: Optional[Sphere] = None,
         max_residues: int = 10,
 ):
     """
@@ -259,7 +259,7 @@ def make_amino_acid_coords_full(
             atoms=atoms,
             grid=img_params.grid,
             n=max_residues,
-            bounding_sphere=bounding_sphere,
+            sidechain_sphere=sidechain_sphere,
     )
 
     c_alphas = (
@@ -317,7 +317,7 @@ def make_amino_acid_image_full(
         *,
         img_params: ImageParams,
         amino_acids: pl.DataFrame,
-        bounding_sphere: Optional[Sphere] = None,
+        sidechain_sphere: Optional[Sphere] = None,
         coord_radius_A: float = 1,
         crop_length_voxels: Optional[int] = None,
 ):
@@ -325,7 +325,7 @@ def make_amino_acid_image_full(
             sample,
             img_params=img_params,
             amino_acids=amino_acids,
-            bounding_sphere=bounding_sphere,
+            sidechain_sphere=sidechain_sphere,
             max_residues=1,
     )
     have_label = len(x['coord_labels']) > 0

@@ -9,7 +9,7 @@ from pathlib import Path
 from io import StringIO
 
 TEST_DIR = Path(__file__).parent
-IMAGE_DIR = TEST_DIR / 'resources'
+IMAGE_DIR = CIF_DIR = TEST_DIR / 'resources'
 
 with_py = pff.Namespace()
 with_math = pff.Namespace('from math import *')
