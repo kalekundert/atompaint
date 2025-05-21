@@ -16,7 +16,7 @@ classifiers = [
 dependencies = [
   'blosum',
   'einops',
-  'escnn @ git+https://github.com/kalekundert/escnn@0ac580d36ac682e8bae8a37192259f89d478f230',
+  'escnn_atompaint',
   'fastdigest',
   'lightning',
   'macromol_dataframe',
