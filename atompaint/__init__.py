@@ -1,7 +1,7 @@
 """
 Design macromolecular interactions by in-painting full-atom models.
 """
-__version__ = '0.0.0'
+__version__ = '0.1.0'
 
 # Avoid importing any subpackages here.  This speeds up load time, since it 
 # guarantees that no expensive packages (e.g. torch, lightning, escnn, pandas, 
