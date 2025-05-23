@@ -137,13 +137,20 @@ class SequenceRecovery(L.Callback):
         self.limit_samples = limit_samples
         self.progress_bar = progress_bar
 
+        # Lightning does a fast "sanity check" before the real training.  We 
+        # want to detect this, and also run a faster version of this check.
+        self.has_training_started = False
+
+    def on_train_start(self, trainer, task):
+        self.has_training_started = True
+
     def on_validation_epoch_end(self, trainer, task):
         seq_recovery = calc_sequence_recovery(
                 data=self.dataloader,
                 denoiser=task.denoiser,
                 classifier=task.classifier,
                 inpaint_params=self.inpaint_params,
-                limit_samples=self.limit_samples,
+                limit_samples=self.limit_samples if self.has_training_started else 1,
                 device=task.device,
                 progress_bar=self.progress_bar,
         )
