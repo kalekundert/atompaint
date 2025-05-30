@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch.nn as nn
+import torchyield as ty
 
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.conditioning import ConditionedModel, AddConditionToImage
@@ -14,7 +15,7 @@ from multipartial import require_grid
 from typing import Literal, Callable, Optional
 from torchyield import LayerFactory
 
-class AsymUNet(ConditionedModel):
+class AsymUNet_BlockChannels(ConditionedModel):
 
     def __init__(
             self,
@@ -31,6 +32,7 @@ class AsymUNet(ConditionedModel):
             noise_embedding: LayerFactory,
             label_embedding: Optional[LayerFactory] = None,
             allow_self_cond: bool = False,
+            verbose: bool = False,
     ):
         """
         Construct a non-equivariant U-Net.
@@ -215,13 +217,128 @@ class AsymUNet(ConditionedModel):
             for in_out_channels, block_factories_i in params:
                 yield *in_out_channels, block_factories_i
 
+        unet_blocks = iter_unet_blocks()
+
+        if verbose:
+            unet_blocks = ty.verbose(unet_blocks)
+
         super().__init__(
-                model=UNet(iter_unet_blocks()),
+                model=UNet(unet_blocks),
                 noise_embedding=noise_embedding(cond_dim),
                 label_embedding=label_embedding and label_embedding(cond_dim),
                 allow_self_cond=allow_self_cond,
         )
 
+
+class AsymUNet_DownUpChannels(ConditionedModel):
+
+    def __init__(
+            self,
+            *,
+            channels: list[int],
+            head_factory: LayerFactory,
+            tail_factory: LayerFactory,
+            block_factories: list[list[LayerFactory]],
+            latent_factory: LayerFactory,
+            downsample_factory: LayerFactory,
+            upsample_factory: LayerFactory,
+            skip_algorithm: Literal['cat', 'add'] = 'cat',
+            cond_dim: int,
+            noise_embedding: LayerFactory,
+            label_embedding: Optional[LayerFactory] = None,
+            allow_self_cond: bool = False,
+            verbose: bool = False,
+    ):
+        PopSkip = get_pop_skip_class(skip_algorithm)
+        block_factories = require_grid(
+                block_factories,
+                rows=len(channels) - 2,
+        )
+
+        def iter_unet_blocks():
+            head = head_factory(
+                    in_channels=channels[0] * (2 if allow_self_cond else 1),
+                    out_channels=channels[1],
+            )
+            yield NoSkip.from_layers(head)
+
+            for in_channels, out_channels, block_factories_i in \
+                    iter_encoder_params():
+
+                for factory in block_factories_i:
+                    block = factory(
+                            in_channels=in_channels,
+                            out_channels=in_channels,
+                            cond_dim=cond_dim,
+                    )
+                    yield PushSkip.from_layers(block)
+
+                downsample = downsample_factory(
+                        in_channels=in_channels,
+                        out_channels=out_channels,
+                )
+                yield NoSkip.from_layers(downsample)
+
+            latent = latent_factory(
+                    channels=out_channels,
+                    cond_dim=cond_dim,
+            )
+            yield NoSkip.from_layers(latent)
+
+            for in_channels, out_channels, block_factories_i in \
+                    iter_decoder_params():
+
+                upsample = upsample_factory(
+                        in_channels=in_channels,
+                        out_channels=out_channels,
+                )
+                yield NoSkip.from_layers(upsample)
+
+                for factory in reversed(block_factories_i):
+                    block = factory(
+                            in_channels=PopSkip.adjust_in_channels(out_channels),
+                            out_channels=out_channels,
+                            cond_dim=cond_dim,
+                    )
+                    yield PopSkip.from_layers(block)
+
+            tail = tail_factory(
+                    in_channels=channels[1],
+                    out_channels=channels[0],
+            )
+            yield NoSkip.from_layers(tail)
+
+        def iter_encoder_params():
+            params = zip(
+                    pairwise(channels[1:]),
+                    block_factories,
+                    strict=True,
+            )
+            for in_out_type, block_factories_i in params:
+                yield *in_out_type, block_factories_i
+
+        def iter_decoder_params():
+            params = zip(
+                    pairwise(reversed(channels[1:])),
+                    reversed(block_factories),
+                    strict=True,
+            )
+            for in_out_channels, block_factories_i in params:
+                yield *in_out_channels, block_factories_i
+
+        unet_blocks = iter_unet_blocks()
+
+        if verbose:
+            unet_blocks = ty.verbose(unet_blocks)
+
+        super().__init__(
+                model=UNet(unet_blocks),
+                noise_embedding=noise_embedding(cond_dim),
+                label_embedding=label_embedding and label_embedding(cond_dim),
+                allow_self_cond=allow_self_cond,
+        )
+
+AsymUNet = AsymUNet_BlockChannels  # for backwards compatibility
 
 class AsymConditionedConvBlock(nn.Module):
     """

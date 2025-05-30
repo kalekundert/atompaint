@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torchyield as ty
 
 from .unet import UNet, PushSkip, NoSkip, get_pop_skip_class
 from atompaint.conditioning import ConditionedModel
@@ -19,7 +20,7 @@ from escnn.nn import FieldType
 from collections.abc import Iterable
 from typing import Literal, Optional
 
-class SymUNet(ConditionedModel):
+class SymUNet_BlockChannels(ConditionedModel):
 
     def __init__(
             self,
@@ -37,6 +38,7 @@ class SymUNet(ConditionedModel):
             noise_embedding: LayerFactory,
             label_embedding: Optional[LayerFactory] = None,
             allow_self_cond: bool = False,
+            verbose: bool = False,
     ):
         field_types = list(field_types)
         block_factories = require_grid(
@@ -114,8 +116,13 @@ class SymUNet(ConditionedModel):
             for in_out_type, block_factories_i in params:
                 yield *in_out_type, block_factories_i
             
+        unet_blocks = iter_unet_blocks()
+
+        if verbose:
+            unet_blocks = ty.verbose(unet_blocks)
+
         super().__init__(
-                model=UNet(iter_unet_blocks()),
+                model=UNet(unet_blocks),
                 noise_embedding=noise_embedding(cond_dim),
                 label_embedding=label_embedding and label_embedding(cond_dim),
                 allow_self_cond=allow_self_cond,
@@ -127,6 +134,125 @@ class SymUNet(ConditionedModel):
     def unwrap_output(self, x: GeometricTensor) -> Tensor:
         assert x.type == self.out_type
         return x.tensor
+
+class SymUNet_DownUpChannels(ConditionedModel):
+
+    def __init__(
+            self,
+            *,
+            img_channels: int,
+            field_types: Iterable[FieldType],
+            head_factory: LayerFactory,
+            tail_factory: LayerFactory,
+            block_factories: list[list[LayerFactory]],
+            latent_factory: LayerFactory,
+            downsample_factory: LayerFactory,
+            upsample_factory: LayerFactory,
+            skip_algorithm: Literal['cat', 'add'] = 'cat',
+            cond_dim: int,
+            noise_embedding: LayerFactory,
+            label_embedding: Optional[LayerFactory] = None,
+            allow_self_cond: bool = False,
+            verbose: bool = False,
+    ):
+        field_types = list(field_types)
+        block_factories = require_grid(
+                block_factories,
+                rows=len(field_types) - 1,
+        )
+        gspace = field_types[0].gspace
+        head_channels = img_channels * (2 if allow_self_cond else 1)
+
+        self.in_type = one(make_trivial_field_type(gspace, img_channels))
+        self.head_type = one(make_trivial_field_type(gspace, head_channels))
+        self.out_type = self.in_type
+        self.img_channels = img_channels
+
+        PopSkip = get_pop_skip_class(skip_algorithm)
+
+        def iter_unet_blocks():
+            head = head_factory(
+                    in_type=self.head_type,
+                    out_type=field_types[0],
+            )
+            yield NoSkip.from_layers(head)
+
+            for in_type, out_type, block_factories_i in iter_encoder_params():
+                for block_factory_ij in block_factories_i:
+                    encoder = block_factory_ij(
+                            in_type=in_type,
+                            out_type=in_type,
+                            cond_dim=cond_dim,
+                    )
+                    yield PushSkip.from_layers(encoder)
+
+                downsample = downsample_factory(
+                        in_type=in_type,
+                        out_type=out_type,
+                )
+                yield NoSkip.from_layers(downsample)
+
+            latent = latent_factory(
+                    in_type=out_type,
+                    cond_dim=cond_dim,
+            )
+            yield NoSkip.from_layers(latent)
+
+            for in_type, out_type, block_factories_i in iter_decoder_params():
+                upsample = upsample_factory(
+                        in_type=in_type,
+                        out_type=out_type,
+                )
+                yield NoSkip.from_layers(upsample)
+
+                for block_factory_ij in block_factories_i:
+                    decoder = block_factory_ij(
+                            in_type=PopSkip.adjust_in_channels(out_type),
+                            out_type=out_type,
+                            cond_dim=cond_dim,
+                    )
+                    yield PopSkip.from_layers(decoder)
+
+            tail = tail_factory(
+                    in_type=field_types[0],
+                    out_type=self.out_type,
+            )
+            yield NoSkip.from_layers(tail)
+
+        def iter_encoder_params():
+            params = zip(pairwise(field_types), block_factories, strict=True)
+            for in_out_type, block_factories_i in params:
+                yield *in_out_type, block_factories_i
+
+        def iter_decoder_params():
+            params = zip(
+                    pairwise(reversed(field_types)),
+                    reversed(block_factories),
+                    strict=True,
+            )
+            for in_out_type, block_factories_i in params:
+                yield *in_out_type, block_factories_i
+            
+        unet_blocks = iter_unet_blocks()
+
+        if verbose:
+            unet_blocks = ty.verbose(unet_blocks)
+
+        super().__init__(
+                model=UNet(unet_blocks),
+                noise_embedding=noise_embedding(cond_dim),
+                label_embedding=label_embedding and label_embedding(cond_dim),
+                allow_self_cond=allow_self_cond,
+        )
+
+    def wrap_input(self, x: Tensor) -> GeometricTensor:
+        return GeometricTensor(x, self.head_type)
+
+    def unwrap_output(self, x: GeometricTensor) -> Tensor:
+        assert x.type == self.out_type
+        return x.tensor
+
+SymUNet = SymUNet_BlockChannels
 
 class SymUNetBlock(nn.Module):
     """

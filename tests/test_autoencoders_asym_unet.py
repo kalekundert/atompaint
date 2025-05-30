@@ -19,7 +19,7 @@ with_ap = pff.Namespace('from atompaint.autoencoders.asym_unet import *')
             dict(allow_self_cond=True),
         ],
 )
-def test_asym_unet(kwargs):
+def test_asym_unet_block_channels(kwargs):
 
     def head_factory(in_channels, out_channels):
         yield nn.Conv3d(
@@ -99,6 +99,104 @@ def test_asym_unet(kwargs):
     x = torch.randn(2, 1, 8, 8, 8)
     y = torch.randn(2)
     xy = torch.randn(2, 1, 8, 8, 8)
+
+    assert_vars_change(
+            model=ModuleWrapper(unet),
+            loss_fn=nn.MSELoss(),
+            optim=torch.optim.Adam(unet.parameters()),
+            batch=(InputWrapper(x, y), xy),
+            device='cpu',
+    )
+
+@pytest.mark.parametrize(
+        'kwargs', [
+            dict(),
+            dict(skip_algorithm='add'),
+            dict(allow_self_cond=True),
+        ],
+)
+def test_asym_unet_down_up_channels(kwargs):
+
+    def head_factory(in_channels, out_channels):
+        yield nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                bias=False,
+        )
+        yield nn.BatchNorm3d(out_channels)
+        yield nn.ReLU()
+
+    def tail_factory(in_channels, out_channels):
+        yield nn.ConvTranspose3d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                padding=0,
+        )
+
+    def block_factory(in_channels, out_channels, cond_dim):
+        yield ap.AsymConditionedConvBlock(
+                in_channels,
+                out_channels,
+                cond_dim=cond_dim,
+        )
+
+    def latent_factory(channels, cond_dim):
+        yield from block_factory(
+                in_channels=channels,
+                out_channels=channels,
+                cond_dim=cond_dim,
+        )
+
+    def downsample_factory(in_channels, out_channels):
+        yield nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                bias=False,
+        )
+        yield nn.BatchNorm3d(out_channels)
+        yield nn.ReLU()
+
+    def upsample_factory(in_channels, out_channels):
+        yield nn.ConvTranspose3d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+        )
+        yield nn.BatchNorm3d(out_channels)
+        yield nn.ReLU()
+
+    def noise_embedding(cond_dim):
+        yield SinusoidalEmbedding(
+                out_dim=cond_dim,
+                min_wavelength=0.1,
+                max_wavelength=100,
+        )
+        yield nn.Linear(cond_dim, cond_dim)
+        yield nn.ReLU()
+
+    unet = ap.AsymUNet_DownUpChannels(
+            channels=[1, 2, 3, 4],
+            head_factory=head_factory,
+            tail_factory=tail_factory,
+            block_factories=multipartial[1,2](block_factory),
+            latent_factory=latent_factory,
+            downsample_factory=downsample_factory,
+            upsample_factory=upsample_factory,
+            cond_dim=6,
+            noise_embedding=noise_embedding,
+            **kwargs,
+    )
+
+    x = torch.randn(2, 1, 11, 11, 11)
+    y = torch.randn(2)
+    xy = torch.randn(2, 1, 11, 11, 11)
 
     assert_vars_change(
             model=ModuleWrapper(unet),
