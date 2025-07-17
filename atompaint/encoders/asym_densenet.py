@@ -50,7 +50,6 @@ class AsymDenseBlock(Module):
         self.concats = ModuleList(concats)
         self.gather = ty.module_from_layers(
                 gather_factory(curr_channels, out_channels),
-                verbose=True,
         )
 
     def forward(self, x: Tensor) -> Tensor:
