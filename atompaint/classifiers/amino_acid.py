@@ -13,7 +13,7 @@ from macromol_gym_unsupervised import (
         MakeSampleArgs, ImageParams, make_unsupervised_image_sample, 
 )
 from macromol_dataframe import assign_residue_ids
-from visible_residues import sample_visible_residues, Sphere
+from visible_residues import find_visible_residues, sample_visible_residues, Sphere
 from torch.nn import Module, CrossEntropyLoss, Flatten
 from torch.optim import Adam
 from torchmetrics import MeanMetric, Accuracy
@@ -194,6 +194,19 @@ class CoordinateClassifier(Module):
         z_coords = self.embed_coords(x_coords)
         return self.mlp(z_atoms + z_coords)
 
+class UnnormalizedClassifier(Module):
+
+    def __init__(self, classifier, scale_factor):
+        super().__init__()
+        self.classifier = classifier
+        self.scale_factor = scale_factor
+
+    def forward(self, x):
+        return self.classifier(x * self.scale_factor)
+
+    @property
+    def amino_acids(self):
+        return self.classifier.amino_acids
 
 class BlosumMetric(MeanMetric):
     """
@@ -230,7 +243,7 @@ def make_amino_acid_coords_full(
         img_params: ImageParams,
         amino_acids: pl.DataFrame,
         sidechain_sphere: Optional[Sphere] = None,
-        max_residues: int = 10,
+        max_residues: Optional[int] = None,
 ):
     """
     Arguments:
@@ -254,13 +267,20 @@ def make_amino_acid_coords_full(
     atoms = balance_amino_acids(sample.rng, atoms, amino_acids)
     atoms = remove_ambiguous_labels(atoms)
 
-    visible = sample_visible_residues(
-            rng=sample.rng,
+    kwargs = dict(
             atoms=atoms,
             grid=img_params.grid,
-            n=max_residues,
             sidechain_sphere=sidechain_sphere,
     )
+
+    if max_residues is None:
+        visible = find_visible_residues(**kwargs)
+    else:
+        visible = sample_visible_residues(
+                rng=sample.rng,
+                n=max_residues,
+                **kwargs,
+        )
 
     c_alphas = (
             atoms
@@ -270,8 +290,12 @@ def make_amino_acid_coords_full(
                 pl.col('element') == 'C',
             )
             .select(
-                residue_id=pl.col('residue_id'),
+                chain_id=pl.col('chain_id'),
+                subchain_id=pl.col('subchain_id'),
+                entity_id=pl.col('entity_id'),
                 alt_id=pl.col('alt_id'),
+                seq_id=pl.col('seq_id'),
+                residue_id=pl.col('residue_id'),
                 comp_id=pl.col('comp_id'),
                 Cα_coord_A=pl.concat_arr('x', 'y', 'z'),
             )
@@ -297,6 +321,7 @@ def make_amino_acid_coords_full(
                 right_on='name3',
             )
             .sort('residue_id')
+            .drop('residue_id')
             .collect()
     )
 

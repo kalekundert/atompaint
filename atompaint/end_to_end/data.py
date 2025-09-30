@@ -11,7 +11,7 @@ from atompaint.classifiers.amino_acid import (
 )
 from macromol_gym_unsupervised import (
         MakeSampleArgs, ImageParams, normalize_image_in_place,
-        get_cached, select_cached_metadatum
+        get_cached, select_cached_metadatum, select_zone_pdb_ids
 )
 from visible_residues import Sphere
 from scipy.stats import Normal
@@ -25,7 +25,7 @@ def make_end_to_end_sample_full(
         img_params: ImageParams,
         amino_acids: pl.DataFrame,
         sidechain_sphere: Optional[Sphere] = None,
-        max_residues: int,
+        max_residues: Optional[int] = None,
         coord_radius_A: float,
         crop_length_voxels: int,
         use_x_pred_fraction: float = 1.0,
@@ -101,7 +101,7 @@ def make_end_to_end_sample_full(
 
     gaps_ok, gap_label = find_gap_label(amino_acids)
 
-    if gaps_ok:
+    if gaps_ok and max_residues is not None:
         for _ in range(n, max_residues):
             aa_crop = sample_uniform_crop(
                     rng=rng,
@@ -128,11 +128,11 @@ def make_end_to_end_sample_full(
     if sequence_recovery:
         protein_label = find_L_polypeptide_label(sample.db, sample.db_cache)
 
-        # We want a radius that is large enough to prevent the model from adding 
-        # new covalent bonds to the unmasked atoms, but small enough to allow new 
-        # H-bonds.  The typical distance between the heavy atoms participating in 
-        # an H-bond is about 3.0Å, from which we subtract the radius used for atoms 
-        # in the image and a buffer of 0.5Å.
+        # We want a radius that is large enough to prevent the model from 
+        # adding new covalent bonds to the unmasked atoms, but small enough to 
+        # allow new H-bonds.  The typical distance between the heavy atoms 
+        # participating in an H-bond is about 3.0Å, from which we subtract the 
+        # radius used for atoms in the image and a buffer of 0.5Å.
 
         h_bond_dist_A = 3.0
         unmask_radius_A = h_bond_dist_A - img_params.resolve_atom_radius_A() - 0.5
@@ -193,6 +193,47 @@ def collate_end_to_end_samples(batch):
 
     if all(x['seq_recovery_mask'] is not None for x in batch):
         out['seq_recovery_mask'] = stack('seq_recovery_mask')
+
+    return out
+
+
+def make_sequence_recovery_sample(sample, **kwargs):
+    x = make_end_to_end_sample_full(sample, sequence_recovery=True, **kwargs)
+
+    return {
+            'zone_id': sample.zone_id,
+            'pdb_ids': select_zone_pdb_ids(sample.db, sample.zone_id),
+            'x_clean': x['image'],
+            'aa_crops': x['aa_crops'],
+            'aa_channels': x['aa_channels'],
+            'aa_labels': x['aa_labels'],
+            'coord_labels': x['coord_labels'],
+            'seq_recovery_mask': x['seq_recovery_mask'],
+    }
+
+def collate_sequence_recovery_samples(batch):
+    def seq(k):
+        return [x[k] for x in batch]
+
+    def stack(k):
+        return torch.stack([torch.from_numpy(x[k]) for x in batch])
+
+    def cat(k):
+        return torch.cat([torch.from_numpy(x[k]) for x in batch])
+
+    out = {}
+
+    out['zone_id'] = seq('zone_id')
+    out['pdb_ids'] = seq('pdb_ids')
+    out['x_clean'] = stack('x_clean')
+    out['aa_crops'] = []
+    out['aa_channels'] = cat('aa_channels')
+    out['aa_labels'] = cat('aa_labels')
+    out['coord_labels'] = seq('coord_labels')
+    out['seq_recovery_mask'] = stack('seq_recovery_mask')
+
+    for b, x in enumerate(batch):
+        out['aa_crops'] += [(b, *cxyz) for cxyz in x['aa_crops']]
 
     return out
 

@@ -11,6 +11,7 @@ from atompaint.classifiers.amino_acid import BlosumMetric
 from atompaint.checkpoints import EvalModeCheckpointMixin
 from atompaint.type_hints import OptFactory, LrFactory
 from atompaint.metrics import TrainValTestMetrics
+from atompaint.eval import with_max_batch_size
 from torchmetrics import MeanMetric, Accuracy
 from torch.utils.data import DataLoader
 from tquiet import tquiet, ProgressBarFactory
@@ -161,6 +162,7 @@ def calc_sequence_recovery(
         data: DataLoader,
         denoiser: nn.Module,
         classifier: nn.Module,
+        classifier_max_batch_size: int = 32,
         inpaint_params: InpaintParams,
         limit_samples: Optional[int] = None,
         device: Optional[torch.device] = None,
@@ -180,7 +182,11 @@ def calc_sequence_recovery(
     n = 0
     b = data.batch_size
 
-    data_iter = progress_bar(data, total=limit_samples // b)
+    data_iter = progress_bar(
+            data,
+            total=limit_samples // b if limit_samples else len(data),
+    )
+    classifier = with_max_batch_size(classifier, classifier_max_batch_size)
 
     for i, batch in enumerate(data_iter):
         if device:
