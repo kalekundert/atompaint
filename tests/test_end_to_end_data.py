@@ -1,7 +1,6 @@
 import atompaint.end_to_end.data as ap
 import macromol_dataframe as mmdf
 import macromol_voxelize as mmvox
-import polars as pl
 import torch
 import numpy as np
 
@@ -20,12 +19,6 @@ def test_make_sequence_recovery_mask_3v4i():
     )
     atoms = mmdf.prune_hydrogen(atoms)
     atoms = mmdf.prune_water(atoms)
-    atoms = atoms.with_columns(
-            polymer_label=(
-                pl.col('entity_id')
-                .replace_strict({'1': 0}, default=None)
-            )
-    )
 
     grid = mmvox.Grid(
             length_voxels=19,
@@ -36,14 +29,13 @@ def test_make_sequence_recovery_mask_3v4i():
     mask = ap.make_sequence_recovery_mask(
             atoms,
             grid=grid,
-            protein_label=0,
-            unmask_radius_A=2.0,
+            unmask_radii_A={'N': 0.5, 'CA': 0.5, '*': 2.0},
     )
 
-    expected_path = CIF_DIR / 'mask.npz'
+    expected_path = CIF_DIR / 'mask_3v4i.npz'
 
     if not expected_path.exists():
-        candidate_path = CIF_DIR / 'mask_candidate.npz'
+        candidate_path = CIF_DIR / 'mask_candidate_3v4i.npz'
         mmvox.write_npz(candidate_path, mask, grid)
 
         fail(f"Reference image not found: {expected_path}\nTest image: {candidate_path}\nIf the test image looks right, rename it to the above reference path and rerun the test.")
