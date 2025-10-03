@@ -10,14 +10,37 @@ from atompaint.classifiers.amino_acid import (
         make_amino_acid_coords_full, find_gap_label,
 )
 from macromol_gym_unsupervised import (
-        MakeSampleArgs, ImageParams, normalize_image_in_place,
-        get_cached, select_cached_metadatum, select_zone_pdb_ids
+        MakeSampleArgs, ImageParams,
+        normalize_image_in_place, select_zone_pdb_ids,
 )
 from visible_residues import Sphere
 from scipy.stats import Normal
 from dataclasses import replace
 
 from typing import Optional
+
+amino_acid_comp_ids = [
+        'ALA',
+        'CYS',
+        'ASP',
+        'GLU',
+        'GLY',
+        'HIS',
+        'ILE',
+        'LYS',
+        'LEU',
+        'MET',
+        'ASN',
+        'PHE',
+        'PRO',
+        'GLN',
+        'ARG',
+        'SER',
+        'THR',
+        'VAL',
+        'TRP',
+        'TYR',
+]
 
 def make_end_to_end_sample_full(
         sample: MakeSampleArgs,
@@ -126,8 +149,6 @@ def make_end_to_end_sample_full(
     mask = None
 
     if sequence_recovery:
-        protein_label = find_L_polypeptide_label(sample.db, sample.db_cache)
-
         # We want a radius that is large enough to prevent the model from 
         # adding new covalent bonds to the unmasked atoms, but small enough to 
         # allow new H-bonds.  The typical distance between the heavy atoms 
@@ -135,13 +156,19 @@ def make_end_to_end_sample_full(
         # radius used for atoms in the image and a buffer of 0.5Å.
 
         h_bond_dist_A = 3.0
-        unmask_radius_A = h_bond_dist_A - img_params.resolve_atom_radius_A() - 0.5
+        covalent_dist_A = 1.5
+        atom_radius_A = img_params.resolve_atom_radius_A() + 0.5
+
+        unmask_radii_A = {
+                'N':  covalent_dist_A - atom_radius_A,
+                'CA': covalent_dist_A - atom_radius_A,
+                '*':  h_bond_dist_A - atom_radius_A,
+        }
 
         mask = make_sequence_recovery_mask(
                 atoms=x['atoms_a'],
                 grid=img_params.grid,
-                protein_label=protein_label,
-                unmask_radius_A=unmask_radius_A,
+                unmask_radii_A=unmask_radii_A,
         )
 
     return {
@@ -246,7 +273,12 @@ def collate_sequence_recovery_samples(batch):
     return out
 
 
-def make_sequence_recovery_mask(atoms, *, grid, protein_label, unmask_radius_A):
+def make_sequence_recovery_mask(
+        atoms,
+        *,
+        grid,
+        unmask_radii_A: dict[str, float],
+):
     sidechain_sphere = replace(
             vizres.get_sidechain_sphere(),
             radius_A=6,
@@ -292,38 +324,25 @@ def make_sequence_recovery_mask(atoms, *, grid, protein_label, unmask_radius_A):
     unmasked_atoms = (
             atoms
             .filter(
-                # Don't include the Cα here.  If we included it, the Cβ is 
-                # close enough that it would end up unmasked too, if present.  
-                # The Cα will still end up unmasked, because it's close enough 
-                # to the N and C.
                 pl.struct('atom_id', 'element').is_in([
                     dict(atom_id='N', element='N'),
+                    dict(atom_id='CA', element='C'),
                     dict(atom_id='C', element='C'),
                     dict(atom_id='O', element='O'),
                 ]).or_(
-                    pl.col('polymer_label') != protein_label
-                ).or_(
-                    pl.col('polymer_label').is_null()
+                    ~pl.col('comp_id').is_in(amino_acid_comp_ids)
                 )
-
             )
             .with_columns(
-                radius_A=unmask_radius_A,
+                radius_A=pl.col('atom_id').replace_strict(
+                    unmask_radii_A,
+                    default=unmask_radii_A.pop('*'),
+                ),
             )
     )
     unmask = mmvox.image_from_all_atoms(unmasked_atoms, img_params)
 
     return np.minimum(mask, 1 - unmask)
-
-def find_L_polypeptide_label(db, db_cache):
-    return get_cached(
-            cache=db_cache,
-            key='L_polypeptide_label',
-            value_factory=lambda: (
-                    select_cached_metadatum(db, db_cache, 'polymer_labels')
-                    .index('polypeptide(L)')
-            ),
-    )
 
 def make_amino_acid_crops(
         *,
