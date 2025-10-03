@@ -197,12 +197,18 @@ def collate_end_to_end_samples(batch):
     return out
 
 
-def make_sequence_recovery_sample(sample, **kwargs):
-    x = make_end_to_end_sample_full(sample, sequence_recovery=True, **kwargs)
-
+def make_sequence_recovery_sample(sample, *, img_params, **kwargs):
+    x = make_end_to_end_sample_full(
+            sample,
+            img_params=img_params,
+            sequence_recovery=True,
+            **kwargs,
+    )
     return {
             'zone_id': sample.zone_id,
             'pdb_ids': select_zone_pdb_ids(sample.db, sample.zone_id),
+            'img_params': img_params,
+            'frame_xi': mmdf.invert_coord_frame(x['frame_ia']),
             'x_clean': x['image'],
             'aa_crops': x['aa_crops'],
             'aa_channels': x['aa_channels'],
@@ -225,6 +231,8 @@ def collate_sequence_recovery_samples(batch):
 
     out['zone_id'] = seq('zone_id')
     out['pdb_ids'] = seq('pdb_ids')
+    out['img_params'] = seq('img_params')
+    out['frame_xi'] = seq('frame_xi')
     out['x_clean'] = stack('x_clean')
     out['aa_crops'] = []
     out['aa_channels'] = cat('aa_channels')
