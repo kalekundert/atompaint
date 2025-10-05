@@ -244,6 +244,7 @@ def make_amino_acid_coords_full(
         amino_acids: pl.DataFrame,
         sidechain_sphere: Optional[Sphere] = None,
         max_residues: Optional[int] = None,
+        **kwargs,
 ):
     """
     Arguments:
@@ -257,7 +258,7 @@ def make_amino_acid_coords_full(
             - `pick_prob`: The probability of including any particular amino 
               acid of this type in the dataset.
     """
-    x = make_unsupervised_image_sample(sample, img_params=img_params)
+    x = make_unsupervised_image_sample(sample, img_params=img_params, **kwargs)
     atoms = x['image_atoms_a']
 
     # It's important that the residue id assignment is deterministic (i.e.  
@@ -345,6 +346,7 @@ def make_amino_acid_image_full(
         sidechain_sphere: Optional[Sphere] = None,
         coord_radius_A: float = 1,
         crop_length_voxels: Optional[int] = None,
+        **kwargs,
 ):
     x = make_amino_acid_coords_full(
             sample,
@@ -352,6 +354,7 @@ def make_amino_acid_image_full(
             amino_acids=amino_acids,
             sidechain_sphere=sidechain_sphere,
             max_residues=1,
+            **kwargs,
     )
     have_label = len(x['coord_labels']) > 0
 

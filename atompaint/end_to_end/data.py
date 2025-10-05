@@ -30,6 +30,7 @@ amino_acid_comp_ids = [
         'LYS',
         'LEU',
         'MET',
+        'MSE',
         'ASN',
         'PHE',
         'PRO',
@@ -58,6 +59,8 @@ def make_end_to_end_sample_full(
         # to σ values in roughly the range [1.9e-3, 5.4e2].
         log_sigma_mean: float = -1.2,
         log_sigma_std: float = 1.2,
+
+        **kwargs,
 ):
     rng = sample.rng
     C = crop_length_voxels
@@ -68,6 +71,7 @@ def make_end_to_end_sample_full(
             amino_acids=amino_acids,
             sidechain_sphere=sidechain_sphere,
             max_residues=max_residues,
+            **kwargs,
     )
 
     log_sigma_dist = Normal(mu=log_sigma_mean, sigma=log_sigma_std)
@@ -229,6 +233,7 @@ def make_sequence_recovery_sample(sample, *, img_params, **kwargs):
             sample,
             img_params=img_params,
             sequence_recovery=True,
+            filter_atoms=drop_sidechain_atoms,
             **kwargs,
     )
     return {
@@ -313,6 +318,8 @@ def make_sequence_recovery_mask(
             atoms,
             drop_null_ids=False,
     )
+    atoms = drop_sidechain_atoms(atoms)
+
     masked_sidechains = vizres.find_visible_residues(
             atoms,
             grid=grid,
@@ -343,6 +350,21 @@ def make_sequence_recovery_mask(
     unmask = mmvox.image_from_all_atoms(unmasked_atoms, img_params)
 
     return np.minimum(mask, 1 - unmask)
+
+def drop_sidechain_atoms(atoms):
+    return (
+            atoms
+            .filter(
+                pl.struct('atom_id', 'element').is_in([
+                    dict(atom_id='N', element='N'),
+                    dict(atom_id='CA', element='C'),
+                    dict(atom_id='C', element='C'),
+                    dict(atom_id='O', element='O'),
+                ]).or_(
+                    ~pl.col('comp_id').is_in(amino_acid_comp_ids)
+                )
+            )
+    )
 
 def make_amino_acid_crops(
         *,
@@ -384,4 +406,5 @@ def make_amino_acid_crops_where(
         use_x_pred_out.append(use_x_pred[b])
 
     return torch.stack(x_crops), torch.tensor(use_x_pred_out).to(x_pred.device)
+
 
