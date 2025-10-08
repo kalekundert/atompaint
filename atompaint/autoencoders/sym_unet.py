@@ -114,7 +114,7 @@ class SymUNet_BlockChannels(ConditionedModel):
                     strict=True,
             )
             for in_out_type, block_factories_i in params:
-                yield *in_out_type, block_factories_i
+                yield *in_out_type, reversed(block_factories_i)
             
         unet_blocks = iter_unet_blocks()
 
@@ -231,7 +231,7 @@ class SymUNet_DownUpChannels(ConditionedModel):
                     strict=True,
             )
             for in_out_type, block_factories_i in params:
-                yield *in_out_type, block_factories_i
+                yield *in_out_type, reversed(block_factories_i)
             
         unet_blocks = iter_unet_blocks()
 

@@ -217,7 +217,7 @@ class SemiSymUNet_EncDecChannels(ConditionedModel):
                 if not is_first_i:
                     yield NoSkip.from_layers(upsample_factory(in_channels))
 
-                for _, is_last_j, factory in mark_ends(reversed(decoder_factories_i)):
+                for _, is_last_j, factory in mark_ends(decoder_factories_i):
                     decoder = factory(
                             in_channels=PopSkip.adjust_in_channels(in_channels),
                             out_channels=in_channels if not is_last_j else out_channels,
@@ -247,7 +247,7 @@ class SemiSymUNet_EncDecChannels(ConditionedModel):
                     strict=True,
             )
             for (in_type, out_type), decoder_factories_i in params:
-                yield in_type.size, out_type.size, decoder_factories_i
+                yield in_type.size, out_type.size, reversed(decoder_factories_i)
 
         unet_blocks = iter_unet_blocks()
 
@@ -481,7 +481,7 @@ class SemiSymUNet_DownUpChannels(ConditionedModel):
                 )
                 yield NoSkip.from_layers(upsample)
 
-                for factory in reversed(decoder_factories_i):
+                for factory in decoder_factories_i:
                     decoder = factory(
                             in_channels=PopSkip.adjust_in_channels(out_channels),
                             out_channels=out_channels,
@@ -511,7 +511,7 @@ class SemiSymUNet_DownUpChannels(ConditionedModel):
                     strict=True,
             )
             for (in_type, out_type), decoder_factories_i in params:
-                yield in_type.size, out_type.size, decoder_factories_i
+                yield in_type.size, out_type.size, reversed(decoder_factories_i)
 
         unet_blocks = iter_unet_blocks()
 

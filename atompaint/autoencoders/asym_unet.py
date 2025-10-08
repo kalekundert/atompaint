@@ -185,7 +185,7 @@ class AsymUNet_BlockChannels(ConditionedModel):
                 if not is_first_i:
                     yield NoSkip.from_layers(upsample_factory(in_channels))
 
-                for _, is_last_j, factory in mark_ends(reversed(block_factories_i)):
+                for _, is_last_j, factory in mark_ends(block_factories_i):
                     block = factory(
                             in_channels=PopSkip.adjust_in_channels(in_channels),
                             out_channels=in_channels if not is_last_j else out_channels,
@@ -215,7 +215,7 @@ class AsymUNet_BlockChannels(ConditionedModel):
                     strict=True,
             )
             for in_out_channels, block_factories_i in params:
-                yield *in_out_channels, block_factories_i
+                yield *in_out_channels, reversed(block_factories_i)
 
         unet_blocks = iter_unet_blocks()
 
@@ -294,7 +294,7 @@ class AsymUNet_DownUpChannels(ConditionedModel):
                 )
                 yield NoSkip.from_layers(upsample)
 
-                for factory in reversed(block_factories_i):
+                for factory in block_factories_i:
                     block = factory(
                             in_channels=PopSkip.adjust_in_channels(out_channels),
                             out_channels=out_channels,
@@ -324,7 +324,7 @@ class AsymUNet_DownUpChannels(ConditionedModel):
                     strict=True,
             )
             for in_out_channels, block_factories_i in params:
-                yield *in_out_channels, block_factories_i
+                yield *in_out_channels, reversed(block_factories_i)
 
         unet_blocks = iter_unet_blocks()
 
