@@ -416,6 +416,15 @@ class GatedConditionedActivation(nn.Module):
         )
         return self.act(y_wrap, x)
 
+class UnconditionedActivation(nn.Module):
+
+    def __init__(self, activation: nn.Module):
+        super().__init__()
+        self.act = activation
+
+    def forward(self, x: GeometricTensor, y: Tensor):
+        return self.act(x)
+
 def forward_with_condition(module: nn.Module, x, y):
     """
     Run a forward pass of the given module.  Provide the condition only if the 
