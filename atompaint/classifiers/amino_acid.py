@@ -334,7 +334,7 @@ def make_amino_acid_coords(*args, **kwargs):
     x = make_amino_acid_coords_full(*args, **kwargs)
     return {
         'image': x['image'],
-        'coords': x['coord_labels']['Cα_coords_A'].to_numpy().astype(np.float32),
+        'coords': x['coord_labels']['Cα_coord_A'].to_numpy().astype(np.float32),
         'labels': x['coord_labels']['label'].to_numpy(),
     }
 
@@ -736,8 +736,9 @@ def load_expt_131_classifier(*, mode='eval'):
     ckpt_path = 'expt_131/image-size=11A;max-freq=1;resnet-channels=70,140,280;mlp-channels=128,64,21;block-repeats=1;job-id=64928963;epoch=78.ckpt'
     ckpt_xxh32 = 'dc4d651f'
 
-    classifier = make_expt_131_classifier()
-    classifier.amino_acids = get_expt_107_amino_acid_labels(include_gap=True)
+    amino_acids = get_expt_107_amino_acid_labels(include_gap=True)
+
+    classifier = make_expt_131_classifier(amino_acids)
     classifier.image_params = ImageParams(
         grid=Grid(
             length_voxels=11,
@@ -756,7 +757,7 @@ def load_expt_131_classifier(*, mode='eval'):
 
     return classifier
 
-def make_expt_131_classifier():
+def make_expt_131_classifier(amino_acids=None):
     from atompaint.encoders import SymEncoder, late_schedule
     from atompaint.encoders.sym_resnet import SymResBlock
     from atompaint.field_types import make_fourier_field_types
@@ -772,6 +773,9 @@ def make_expt_131_classifier():
     so2_z = False, -1
     ift_grid = so3.grid('thomson_cube', N=96//24)
     ift_sphere_grid = so3.sphere_grid('thomson_cube', N=96//24)
+
+    if amino_acids is None:
+        amino_acids = get_expt_107_amino_acid_labels(include_gap=True)
 
     def block_factory(in_type, out_type, *, downsample, ift_grid):
         if downsample:
@@ -853,12 +857,15 @@ def make_expt_131_classifier():
     )
     mlp = ty.mlp_layer(
             ty.linear_relu_dropout_layer,
-            **ty.channels([128, 64, 21]),
+            **ty.channels([128, 64, len(amino_acids)]),
             dropout_p=0.2,
     )
 
-    return InvariantClassifier(
+    classifier = InvariantClassifier(
             encoder=encoder,
             invariant=invariant,
             mlp=mlp,
     )
+    classifier.amino_acids = amino_acids
+
+    return classifier
