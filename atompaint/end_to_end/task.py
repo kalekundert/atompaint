@@ -96,17 +96,19 @@ class EndToEndTask(EvalModeCheckpointMixin, L.LightningModule):
         weight = (sigma**2 + sigma_data**2) / (sigma * sigma_data)**2
         mse_loss = torch.mean(weight * (x_pred - x_clean)**2)
 
-        x_crop, use_x_pred = make_amino_acid_crops_where(
-                aa_crops=batch['aa_crops'],
-                aa_channels=batch['aa_channels'],
-                x_pred=x_pred,
-                x_clean=x_clean,
-                use_x_pred=batch['use_x_pred'],
-        )
+        if aa_labels.shape[0] == 0:
+            aa_loss = torch.tensor(0., device=x_pred.device)
 
-        aa_pred = self.classifier(x_crop)
-
-        aa_loss = F.cross_entropy(aa_pred, aa_labels)
+        else:
+            x_crop, use_x_pred = make_amino_acid_crops_where(
+                    aa_crops=batch['aa_crops'],
+                    aa_channels=batch['aa_channels'],
+                    x_pred=x_pred,
+                    x_clean=x_clean,
+                    use_x_pred=batch['use_x_pred'],
+            )
+            aa_pred = self.classifier(x_crop)
+            aa_loss = F.cross_entropy(aa_pred, aa_labels)
 
         loss = self.loss_agg(mse_loss, aa_loss)
 
@@ -114,13 +116,14 @@ class EndToEndTask(EvalModeCheckpointMixin, L.LightningModule):
         self.log(f'{loop}/loss/mse', mse_loss)
         self.log(f'{loop}/loss/aa', aa_loss)
 
-        for name, metric in self.aa_metrics.get(loop):
-            metric(aa_pred, aa_labels)
-            self.log(f'{loop}/{name}', metric)
+        if aa_labels.shape[0] != 0:
+            for name, metric in self.use_x_pred_metrics.get(loop):
+                metric(use_x_pred)
+                self.log(f'{loop}/{name}', metric)
 
-        for name, metric in self.use_x_pred_metrics.get(loop):
-            metric(use_x_pred)
-            self.log(f'{loop}/{name}', metric)
+            for name, metric in self.aa_metrics.get(loop):
+                metric(aa_pred, aa_labels)
+                self.log(f'{loop}/{name}', metric)
 
         return loss
 
