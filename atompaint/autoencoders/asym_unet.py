@@ -353,6 +353,7 @@ class AsymConditionedConvBlock(nn.Module):
             cond_dim,
             size_algorithm: Literal['padded-conv', 'upsample', 'transposed-conv'] = 'padded-conv',
             activation_factory: Callable[[], nn.Module] = nn.ReLU,
+            activation_after_skip: bool = False,
     ):
         super().__init__()
 
@@ -404,6 +405,7 @@ class AsymConditionedConvBlock(nn.Module):
 
         self.act1 = activation_factory()
         self.act2 = activation_factory()
+        self.act2_after_skip = activation_after_skip
 
         if in_channels == out_channels:
             self.skip = nn.Identity()
@@ -419,19 +421,22 @@ class AsymConditionedConvBlock(nn.Module):
         assert w == h == d
         assert w >= self.min_input_size
 
-        x_conv = (
-                x
-                | f(self.conv1)
-                | f(self.cond, y)
-                | f(self.bn1)
-                | f(self.act1)
-                | f(self.conv2)
-                | f(self.bn2)
-                | f(self.act2)
-                | f(self.upsample)
-        )
-        x_skip = self.skip(x)
-        return x_skip + x_conv
+        z = self.conv1(x)
+        z = self.cond(z, y)
+        z = self.bn1(z)
+        z = self.act1(z)
+        z = self.conv2(z)
+        z = self.bn2(z)
+
+        if not self.act2_after_skip:
+            z = self.act2(z)
+
+        z = self.upsample(z) + self.skip(x)
+
+        if self.act2_after_skip:
+            z = self.act2(z)
+
+        return z
 
 class AsymAttentionBlock(nn.Module):
     """

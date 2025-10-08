@@ -12,7 +12,6 @@ from escnn.nn import (
 from itertools import pairwise
 from more_itertools import one, mark_ends
 from multipartial import require_grid
-from pipeline_func import f
 
 from torch import Tensor
 from torchyield import LayerFactory
@@ -267,6 +266,7 @@ class SymUNetBlock(nn.Module):
             cond_activation: nn.Module,
             out_activation: nn.Module,
             size_algorithm: Literal['padded-conv', 'upsample', 'transposed-conv'] = 'padded-conv',
+            activation_after_skip: bool = False,
     ):
         """
         Arguments:
@@ -369,6 +369,7 @@ class SymUNetBlock(nn.Module):
 
         self.act1 = cond_activation
         self.act2 = out_activation
+        self.act2_after_skip = activation_after_skip
 
         if in_type == out_type:
             self.skip = lambda x: x
@@ -391,17 +392,18 @@ class SymUNetBlock(nn.Module):
         assert w >= self.min_input_size
         assert x.type == self.in_type
 
-        x_conv = (
-                x
-                | f(self.conv1)
-                | f(self.bn1)
-                | f(self.act1, y)
-                | f(self.conv2)
-                | f(self.bn2)
-                | f(self.act2)
-                | f(self.upsample)
-        )
-        x_skip = self.skip(x)
+        z = self.conv1(x)
+        z = self.bn1(z)
+        z = self.act1(z, y)
+        z = self.conv2(z)
+        z = self.bn2(z)
 
-        return x_conv + x_skip
+        if not self.act2_after_skip:
+            z = self.act2(z)
 
+        z = self.upsample(z) + self.skip(x)
+
+        if self.act2_after_skip:
+            z = self.act2(z)
+
+        return z
