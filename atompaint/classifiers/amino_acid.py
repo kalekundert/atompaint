@@ -757,7 +757,7 @@ def load_expt_131_classifier(*, mode='eval'):
 
     return classifier
 
-def make_expt_131_classifier(amino_acids=None):
+def make_expt_131_classifier(amino_acids=None, *, in_channels=7):
     from atompaint.encoders import SymEncoder, late_schedule
     from atompaint.encoders.sym_resnet import SymResBlock
     from atompaint.field_types import make_fourier_field_types
@@ -832,7 +832,7 @@ def make_expt_131_classifier(amino_acids=None):
         yield Flatten()
 
     encoder = SymEncoder(
-            in_channels=7,
+            in_channels=in_channels,
             channel_schedule=late_schedule,
             field_types=make_fourier_field_types(
                 gspace=gspace,
