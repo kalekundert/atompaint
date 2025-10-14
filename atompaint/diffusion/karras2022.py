@@ -778,7 +778,7 @@ def _heun_sde_solver(
         return torch.cat([
             precond(
                 x_noisy[i:j],
-                σ.repeat(num_images),
+                σ.repeat(j-i),
                 x_self_cond=x_self_cond[i:j],
                 label=labels[i:j] if labels is not None else None,
             )
