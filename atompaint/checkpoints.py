@@ -75,7 +75,7 @@ def load_model_weights(
     # the CPU.  By default, the tensors in the checkpoint will probably be 
     # loaded onto the GPU, since I do my training on GPUs.  But I'd like the 
     # code to run correctly even on systems without a GPU.  The CPU device is 
-    # always available, so it's 'a better target.
+    # always available, so it's a better target.
 
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     weights = extract_state_dict(ckpt['state_dict'], fix_keys=fix_keys)
