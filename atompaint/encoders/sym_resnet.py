@@ -163,7 +163,7 @@ def make_expt_94_resnet():
     outer_channels = [2, 3, 5, 7, 11, 16]
     inner_channels = outer_channels[1:-1]
 
-    return SymEncoder(
+    resnet = SymEncoder(
             in_channels=6,
             field_types=make_fourier_field_types(
                 gspace=gspace,
@@ -192,6 +192,18 @@ def make_expt_94_resnet():
                 ift_grid=ift_grid,
             ),
     )
+
+    # For some reason that I don't understand, some of the single-block basis 
+    # expansion buffers end up on the GPU, while all the other parameters/ 
+    # buffers else ends up on the CPU.  This causes problems when trying to 
+    # convert the model to eval-mode, which requires performing a basis 
+    # expansion.  Explicitly moving everything to the CPU is a hacky way to 
+    # work around this problem, although I don't think it has any negative 
+    # consequences.  The model would have to be moved to the GPU anyway before 
+    # training or inference.
+    resnet.to('cpu')
+
+    return resnet
 
 
 def make_escnn_example_block(
