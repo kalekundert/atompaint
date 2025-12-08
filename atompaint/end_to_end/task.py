@@ -235,3 +235,68 @@ def _move_batch_to_device(batch, device):
     for k, v in batch.items():
         if isinstance(v, torch.Tensor):
             batch[k] = v.to(device)
+
+
+def load_expt_138_denoiser(*, epoch=99, mode='eval'):
+    from atompaint.diffusion.karras2022 import make_expt_102_unet
+    from atompaint.checkpoints import load_model_weights, strip_prefix
+    from functools import partial
+
+    ckpt_path, ckpt_xxh32 = _load_expt_138_ckpt(epoch)
+
+    unet = make_expt_102_unet()
+    load_model_weights(
+            model=unet,
+            path=ckpt_path,
+            xxh32sum=ckpt_xxh32,
+            fix_keys=partial(strip_prefix, prefix='denoiser.'),
+            mode=mode,
+    )
+
+    return unet
+
+def load_expt_138_classifier(*, epoch=99, mode='eval'):
+    from atompaint.classifiers.amino_acid import make_expt_131_classifier, UnnormalizedClassifier
+    from atompaint.checkpoints import load_model_weights, strip_prefix
+    from macromol_gym_unsupervised import ImageParams
+    from macromol_voxelize import Grid
+    from functools import partial
+
+    ckpt_path, ckpt_xxh32 = _load_expt_138_ckpt(epoch)
+
+    classifier = make_expt_131_classifier()
+    classifier.image_params = ImageParams(
+        grid=Grid(
+            length_voxels=11,
+            resolution_A=1.0,
+        ),
+        element_channels=[['C'], ['N'], ['O'], ['P'], ['S','SE'], ['*']],
+    )
+    classifier = UnnormalizedClassifier(classifier, 0.05)
+
+    load_model_weights(
+            model=classifier,
+            path=ckpt_path,
+            xxh32sum=ckpt_xxh32,
+            fix_keys=partial(strip_prefix, prefix='classifier.'),
+            mode=mode,
+    )
+    return classifier
+
+def _load_expt_138_ckpt(epoch):
+    ckpt_paths = {
+            99:  'expt_138/epoch=99-step=1353600.ckpt',
+            199: 'expt_138/epoch=199-step=2707200.ckpt',
+            253: 'expt_138/epoch=253-step=3438144.ckpt',
+    }
+    ckpt_xxh32s = {
+            99:  '888058f2',
+            199: 'a5248786',
+            253: 'd0a4a0a6',
+    }
+
+    try:
+        return ckpt_paths[epoch], ckpt_xxh32s[epoch]
+    except KeyError:
+        raise KeyError(f"no checkpoint available for epoch={epoch}") from None
+

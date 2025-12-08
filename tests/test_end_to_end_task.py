@@ -9,6 +9,7 @@ from atompaint.end_to_end.data import collate_end_to_end_samples
 from atompaint.classifiers.amino_acid import get_amino_acid_labels
 from torch.utils.data import DataLoader
 from pytest import approx
+from utils import require_apw
 
 def test_sequence_recovery():
     # The goals of this test are to make sure that (i) the code runs without 
@@ -103,4 +104,20 @@ def test_sequence_recovery():
     )
 
     assert trainer.callback_metrics['val/sequence_recovery'] == approx(1/4)
+
+@require_apw
+def test_load_expt_138_denoiser():
+    denoiser = ap.load_expt_138_denoiser()
+
+    x_noisy = torch.randn((2, 6, 35, 35, 35))
+    sigma = torch.tensor([0.1, 0.2])
+
+    denoiser(x_noisy, sigma)
+
+@require_apw
+def test_load_expt_138_classifier():
+    classifier = ap.load_expt_138_classifier()
+    x = torch.randn((2, 7, 11, 11, 11))
+
+    classifier(x)
 
