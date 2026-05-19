@@ -3,11 +3,13 @@ import polars as pl
 import numpy as np
 import macromol_voxelize as mmvox
 import macromol_dataframe as mmdf
-import visible_residues as vizres
 
 from atompaint.classifiers.amino_acid import (
         sample_targeted_crop, sample_uniform_crop,
         make_amino_acid_coords_full, find_gap_label,
+)
+from atompaint.mask import (
+        make_protein_residue_mask, drop_sidechain_atoms,
 )
 from macromol_gym_unsupervised import (
         MakeSampleArgs, ImageParams,
@@ -15,33 +17,8 @@ from macromol_gym_unsupervised import (
 )
 from visible_residues import Sphere
 from scipy.stats import Normal
-from dataclasses import replace
 
 from typing import Optional
-
-amino_acid_comp_ids = [
-        'ALA',
-        'CYS',
-        'ASP',
-        'GLU',
-        'GLY',
-        'HIS',
-        'ILE',
-        'LYS',
-        'LEU',
-        'MET',
-        'MSE',
-        'ASN',
-        'PHE',
-        'PRO',
-        'GLN',
-        'ARG',
-        'SER',
-        'THR',
-        'VAL',
-        'TRP',
-        'TYR',
-]
 
 def make_end_to_end_sample_full(
         sample: MakeSampleArgs,
@@ -169,9 +146,10 @@ def make_end_to_end_sample_full(
                 '*':  h_bond_dist_A - atom_radius_A,
         }
 
-        mask = make_sequence_recovery_mask(
+        mask, _ = make_protein_residue_mask(
                 atoms=x['atoms_a'],
                 grid=img_params.grid,
+                unmask_backbone=True,
                 unmask_radii_A=unmask_radii_A,
         )
 
@@ -277,94 +255,6 @@ def collate_sequence_recovery_samples(batch):
 
     return out
 
-
-def make_sequence_recovery_mask(
-        atoms,
-        *,
-        grid,
-        unmask_radii_A: dict[str, float],
-):
-    sidechain_sphere = replace(
-            vizres.get_sidechain_sphere(),
-            radius_A=6,
-    )
-
-    img_params = mmvox.ImageParams(
-            channels=1,
-            grid=grid,
-            fill_algorithm=mmvox.FillAlgorithm.FractionVoxel,
-            agg_algorithm=mmvox.AggAlgorithm.Max,
-    )
-
-    atoms = mmvox.discard_atoms_outside_image(
-            atoms,
-            img_params=replace(
-                img_params,
-
-                # We need to ensure that we include N, Cα, and C for every 
-                # residue that could be in the image.  Cα is at the origin, so 
-                # we need to account for the distance from the center of the 
-                # sphere to the origin.  N and C are bonded to Cα, so they are 
-                # ≈1.5Å away from it.  To be safe, we add 2Å to account for 
-                # this.
-                max_radius_A=(
-                    sidechain_sphere.radius_A
-                    + np.linalg.norm(sidechain_sphere.center_A)
-                    + 2
-                )
-            ),
-    )
-    atoms = mmdf.assign_residue_ids(
-            atoms,
-            drop_null_ids=False,
-    )
-    atoms = drop_sidechain_atoms(atoms)
-
-    masked_sidechains = vizres.find_visible_residues(
-            atoms,
-            grid=grid,
-            sidechain_sphere=sidechain_sphere,
-            visible_rule='any',
-    )
-    mask = mmvox.image_from_all_atoms(masked_sidechains, img_params)
-
-    unmasked_atoms = (
-            atoms
-            .filter(
-                pl.struct('atom_id', 'element').is_in([
-                    dict(atom_id='N', element='N'),
-                    dict(atom_id='CA', element='C'),
-                    dict(atom_id='C', element='C'),
-                    dict(atom_id='O', element='O'),
-                ]).or_(
-                    ~pl.col('comp_id').is_in(amino_acid_comp_ids)
-                )
-            )
-            .with_columns(
-                radius_A=pl.col('atom_id').replace_strict(
-                    unmask_radii_A,
-                    default=unmask_radii_A.pop('*'),
-                ),
-            )
-    )
-    unmask = mmvox.image_from_all_atoms(unmasked_atoms, img_params)
-
-    return np.minimum(mask, 1 - unmask)
-
-def drop_sidechain_atoms(atoms):
-    return (
-            atoms
-            .filter(
-                pl.struct('atom_id', 'element').is_in([
-                    dict(atom_id='N', element='N'),
-                    dict(atom_id='CA', element='C'),
-                    dict(atom_id='C', element='C'),
-                    dict(atom_id='O', element='O'),
-                ]).or_(
-                    ~pl.col('comp_id').is_in(amino_acid_comp_ids)
-                )
-            )
-    )
 
 def make_amino_acid_crops(
         *,
