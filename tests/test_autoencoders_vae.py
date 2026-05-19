@@ -7,6 +7,7 @@ from hypothesis.strategies import composite, floats, one_of, just
 from hypothesis.extra.numpy import arrays
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.kl import kl_divergence
+from functools import partial
 
 @composite
 def mean_std_tensors(draw):
@@ -30,7 +31,7 @@ def mean_std_tensors(draw):
     return torch.from_numpy(mean), torch.from_numpy(std)
 
 def test_kl_divergence():
-    d = _ap.kl_divergence_vs_std_normal
+    d = partial(_ap.kl_divergence_vs_std_normal, dim=[0])
 
     mean = torch.zeros(2)
     std = torch.ones(2)
@@ -44,10 +45,12 @@ def test_kl_divergence_torch(mean_std):
     mean, std = mean_std
     n = mean.nelement()
 
-    N0 = MultivariateNormal(torch.zeros(n), torch.eye(n))
-    N1 = MultivariateNormal(mean.flatten(), torch.diag(std.flatten()))
+    assume(not (std**2).isinf().any())
 
-    kl_ap = _ap.kl_divergence_vs_std_normal(mean, std)
+    N0 = MultivariateNormal(torch.zeros(n), torch.eye(n))
+    N1 = MultivariateNormal(mean.flatten(), torch.diag(std.flatten()**2))
+
+    kl_ap = _ap.kl_divergence_vs_std_normal(mean, std, dim=list(range(mean.ndim)))
 
     # Note that `N1` and `N0` are swapped relative to what you might expect; 
     # the standard normal is not the reference distribution.  This is how 
@@ -58,6 +61,6 @@ def test_kl_divergence_torch(mean_std):
     # infinite and the other is just very large.  This isn't a problem, because 
     # we're not trying to exactly reproduce the torch implementation, but it 
     # will cause the following assertion to fail.  So we skip these cases.
-    assume(kl_ap.isfinite().all() == kl_torch.isfinite().all())
+    assume(kl_ap.isfinite() and kl_torch.isfinite())
 
     torch.testing.assert_close(kl_ap, kl_torch)

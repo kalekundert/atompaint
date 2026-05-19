@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from atompaint.type_hints import OptFactory
+from macromol_gym_unsupervised import MakeSampleArgs
 
 class VariationalAutoencoder(L.LightningModule):
     """
@@ -113,19 +114,29 @@ class VaeLoss:
     def total(self):
         return self.data + self.beta * self.prior
 
-def make_vae_image_tensors(db, db_cache, rng, zone_id, *, img_params):
+def make_vae_image_tensors(sample: MakeSampleArgs, *, img_params):
     from macromol_gym_unsupervised import make_unsupervised_image_sample
 
-    x = make_unsupervised_image_sample(
-            db, db_cache, rng, zone_id,
-            img_params=img_params,
-    )
+    x = make_unsupervised_image_sample(sample, img_params=img_params)
+
     return dict(
             rng=x['rng'],
             image=x['image'],
     )
 
-def kl_divergence_vs_std_normal(mean, std):
+def kl_divergence_vs_std_normal(mean, std, dim=[1,2,3,4]):
+    """
+    Calculate the KL-divergence between the given diagonal Gaussian 
+    distribution and a Gaussian distribution with a mean of 0 and a standard 
+    deviation of 1.
+
+    The *dim* argument specifies over which dimensions the KL-divergence is 
+    summed.  It is averaged over all other dimensions.  The default is 
+    appropriate for 3D images with a batch dimension.
+    """
     # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence#Multivariate_normal_distributions
-    return 0.5 * torch.sum(std + mean**2 - 1 - torch.log(std))
+    var = std**2
+    return torch.mean(
+            0.5 * torch.sum(var + mean**2 - 1 - torch.log(var), dim=dim)
+    )
 
