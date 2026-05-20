@@ -26,38 +26,6 @@ from tqdm import tqdm
 from pathlib import Path
 from math import sqrt
 
-
-class _SizedIterable:
-    def __init__(self, it, length):
-        self._it = it
-        self._len = length
-
-    def __len__(self):
-        return self._len
-
-    def __iter__(self):
-        return iter(self._it)
-
-
-@dataclass(order=True)
-class Interval:
-    start: int  # inclusive minibatch index
-    end: int    # exclusive minibatch index
-
-
-class MetricInterval:
-    def __init__(self, interval, replicate, metric):
-        self.interval = interval
-        self.replicate = replicate
-        self.metric = metric
-
-
-def _get_metric_name(metric):
-    if hasattr(metric, 'name'):
-        return metric.name
-    return repr(metric)
-
-
 class Perturbation:
     algorithm_name: str
     parameter_name: str
@@ -240,35 +208,391 @@ class TruncatedPerturbation(Perturbation):
         return _SizedIterable(islice(it, self.max_batches), n)
 
 
-def _make_perturbed_atom_sample(sample, *, perturb_atoms, img_params):
-    x = make_unsupervised_sample(sample)
-    atoms_a = transform_atom_coords(x['atoms_i'], x['frame_ia'])
-    perturbed_atoms_a = smartcall.call(
-            perturb_atoms,
-            KwOnly('sample', sample),
-            KwOnly('rng', sample.rng),
-            KwOnly('atoms', atoms_a),
-            KwOnly('img_params', img_params),
-    )
-    img, _ = image_from_atoms(perturbed_atoms_a, img_params)
-    return img
 
-def _make_perturbed_voxel_sample(sample, *, perturb_voxels, img_params):
-    x = make_unsupervised_image_sample(sample, img_params=img_params)
-    return smartcall.call(
-            perturb_voxels,
-            KwOnly('sample', sample),
-            KwOnly('rng', sample.rng),
-            KwOnly('img', x['image']),
-            KwOnly('img_params', img_params),
+@dataclass(order=True)
+class Interval:
+    start: int  # inclusive minibatch index
+    end: int    # exclusive minibatch index
+
+
+class MetricInterval:
+    def __init__(self, interval, replicate, metric):
+        self.interval = interval
+        self.replicate = replicate
+        self.metric = metric
+
+
+
+class _SizedIterable:
+    def __init__(self, it, length):
+        self._it = it
+        self._len = length
+
+    def __len__(self):
+        return self._len
+
+    def __iter__(self):
+        return iter(self._it)
+
+
+
+def record_metrics(
+        perturbations,
+        intervals,
+        metric_factories,
+        *,
+        save_images=False,
+        img_dir=Path('images'),
+):
+    rows = []
+
+    for perturbation in tqdm(perturbations, desc='all perturbations'):
+        replicate_counter = defaultdict(int)
+        active = []
+        first_batch = True
+
+        for batch_idx, x in enumerate(
+                tqdm(perturbation.iter_image_batches(),
+                     desc=perturbation.algorithm_name,
+                     leave=False)
+        ):
+            if save_images and first_batch:
+                img_dir.mkdir(exist_ok=True)
+                filename = (
+                        f'{perturbation.algorithm_name}'
+                        f'_{perturbation.parameter_name}'
+                        f'_{perturbation.parameter_value:.4g}.npz'
+                )
+                mmvox.write_npz(
+                        img_dir / filename,
+                        np.asarray(x),
+                        perturbation.img_params.grid,
+                )
+                first_batch = False
+
+            for length, ivs in intervals.items():
+                r = replicate_counter[length]
+                if r < len(ivs) and ivs[r].start == batch_idx:
+                    for factory in metric_factories:
+                        active.append(MetricInterval(ivs[r], r, factory()))
+                    replicate_counter[length] += 1
+
+            for mi in active:
+                mi.metric.update(x)
+
+            still_active = []
+            for mi in active:
+                if batch_idx + 1 == mi.interval.end:
+                    rows.append(dict(
+                            algorithm_name=perturbation.algorithm_name,
+                            parameter_name=perturbation.parameter_name,
+                            parameter_value=perturbation.parameter_value,
+                            metric_name=_get_metric_name(mi.metric),
+                            metric_value=mi.metric.compute().item(),
+                            n=(mi.interval.end - mi.interval.start)
+                              * perturbation.batch_size,
+                            replicate=mi.replicate,
+                    ))
+                else:
+                    still_active.append(mi)
+            active = still_active
+
+    return pl.DataFrame(rows)
+
+def plot_metrics(df, *, perturbation_titles=None, metric_titles=None):
+    algorithms = df['algorithm_name'].unique().sort().to_list()
+    metrics = df['metric_name'].unique().sort().to_list()
+
+    n_rows = len(metrics)
+    n_cols = len(algorithms)
+    cmap = 'rainbow'
+
+    fig, axes = plt.subplots(
+            figsize=(3 * n_cols, 5 * n_rows),
+            nrows=n_rows,
+            ncols=n_cols,
+            sharex='all',
+            sharey='row',
+            layout='constrained',
+            squeeze=False,
     )
 
-def _make_unperturbed_sample(sample, *, img_params):
-    x = make_unsupervised_image_sample(sample, img_params=img_params)
-    return {
-            'seed': sample.i,
-            'image': x['image'],
-    }
+    for col, algorithm in enumerate(algorithms):
+        alg_df = df.filter(pl.col('algorithm_name') == algorithm)
+        param_name = alg_df['parameter_name'][0]
+        ticks = alg_df['parameter_value'].unique().sort()
+        norm = _make_norm(ticks.to_numpy())
+
+        alg_title = (perturbation_titles or {}).get(algorithm, algorithm)
+        is_log = isinstance(norm, LogNorm)
+        fig.colorbar(
+                ScalarMappable(norm=norm, cmap=cmap),
+                ax=list(axes[:, col]),
+                label=f'{alg_title}\n({param_name})',
+                ticks=ticks if not is_log else None,
+                format=LogFormatterMathtext() if is_log else None,
+                location='top',
+        )
+
+        for row, metric in enumerate(metrics):
+            metric_df = alg_df.filter(pl.col('metric_name') == metric)
+            metric_title = (metric_titles or {}).get(metric, metric)
+            ax = axes[row, col]
+
+            sns.lineplot(
+                    metric_df,
+                    x='n',
+                    y='metric_value',
+                    hue='parameter_value',
+                    palette=cmap,
+                    hue_norm=norm,
+                    errorbar=('ci', 95),
+                    ax=ax,
+                    legend=False,
+            )
+            ax.set_xscale('log')
+            ax.set_xlabel('# samples')
+            ax.set_ylabel(metric_title if col == 0 else '')
+
+def make_standard_perturbations(
+        db_path,
+        img_params,
+        *,
+        batch_size=16,
+):
+    perturbations = []
+
+    perturbations += [
+            PerturbAtoms(
+                perturb_atoms=jitter_atoms,
+                parameter_name='noise_A',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in np.linspace(0, 2, 11)
+    ]
+    perturbations += [
+            PerturbAtoms(
+                perturb_atoms=delete_random_atoms,
+                parameter_name='num_deletions',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in range(0, 20, 2)
+    ]
+    perturbations += [
+            PerturbAtoms(
+                perturb_atoms=insert_random_atoms,
+                parameter_name='num_insertions',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in range(0, 20, 2)
+    ]
+    perturbations += [
+            PerturbAtoms(
+                perturb_atoms=change_random_elements,
+                parameter_name='num_swaps',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in range(0, 20, 2)
+    ]
+    perturbations += [
+            PerturbVoxels(
+                perturb_voxels=add_noise_to_image,
+                parameter_name='noise_std',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in np.logspace(-2, 1, 10)
+    ]
+    perturbations += [
+            PerturbVoxels(
+                perturb_voxels=blur_image,
+                parameter_name='blur_std',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in np.logspace(-1, 1, 10)
+    ]
+    perturbations += [
+            PerturbVoxels(
+                perturb_voxels=mix_element_channels,
+                parameter_name='mix_fraction',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in np.linspace(0, 1, 11)
+    ]
+    perturbations += [
+            PerturbBatches(
+                perturb_batch=blend_images,
+                parameter_name='fraction_swapped',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            )
+            for x in np.linspace(0, 1, 11)
+    ]
+
+    return perturbations, min(p.num_batches for p in perturbations)
+
+def make_fast_debug_perturbations(
+        db_path,
+        img_params,
+        *,
+        batch_size=16,
+):
+    perturbations = [
+            TruncatedPerturbation(
+                PerturbVoxels(
+                    perturb_voxels=blur_image,
+                    parameter_name='blur_std',
+                    parameter_value=x,
+                    db_path=db_path,
+                    img_params=img_params,
+                    batch_size=batch_size,
+                ),
+                max_batches=100,
+            )
+            for x in [0.1, 10.0]
+    ]
+    return perturbations, min(p.num_batches for p in perturbations)
+
+def make_dry_run_perturbations(
+        db_path,
+        img_params,
+        *,
+        batch_size=16,
+):
+    def _trunc(p):
+        return TruncatedPerturbation(p, max_batches=100)
+
+    perturbations = []
+
+    perturbations += [
+            _trunc(PerturbAtoms(
+                perturb_atoms=jitter_atoms,
+                parameter_name='noise_A',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.linspace(0, 2, 3)
+    ]
+    perturbations += [
+            _trunc(PerturbAtoms(
+                perturb_atoms=delete_random_atoms,
+                parameter_name='num_deletions',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.linspace(0, 18, 3, dtype=int)
+    ]
+    perturbations += [
+            _trunc(PerturbAtoms(
+                perturb_atoms=insert_random_atoms,
+                parameter_name='num_insertions',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.linspace(0, 18, 3, dtype=int)
+    ]
+    perturbations += [
+            _trunc(PerturbAtoms(
+                perturb_atoms=change_random_elements,
+                parameter_name='num_swaps',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.linspace(0, 18, 3, dtype=int)
+    ]
+    perturbations += [
+            _trunc(PerturbVoxels(
+                perturb_voxels=add_noise_to_image,
+                parameter_name='noise_std',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.logspace(-2, 1, 3)
+    ]
+    perturbations += [
+            _trunc(PerturbVoxels(
+                perturb_voxels=blur_image,
+                parameter_name='blur_std',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.logspace(-1, 1, 3)
+    ]
+    perturbations += [
+            _trunc(PerturbVoxels(
+                perturb_voxels=mix_element_channels,
+                parameter_name='mix_fraction',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.linspace(0, 1, 3)
+    ]
+    perturbations += [
+            _trunc(PerturbBatches(
+                perturb_batch=blend_images,
+                parameter_name='fraction_swapped',
+                parameter_value=x,
+                db_path=db_path,
+                img_params=img_params,
+                batch_size=batch_size,
+            ))
+            for x in np.linspace(0, 1, 3)
+    ]
+
+    return perturbations, min(p.num_batches for p in perturbations)
+
+def make_intervals(rng, num_batches, num_lengths, num_replicates):
+    lengths = np.unique(
+            np.geomspace(1, num_batches, num_lengths).astype(int)
+    )
+    intervals_by_length = {}
+    for length in lengths:
+        num_possible = num_batches // length
+        if num_possible < num_replicates:
+            continue
+        selected = rng.choice(num_possible, size=num_replicates, replace=False)
+        intervals_by_length[length] = sorted(
+                Interval(start=idx * length, end=(idx + 1) * length)
+                for idx in selected
+        )
+    return intervals_by_length
+
 
 def jitter_atoms(rng, atoms, *, noise_A):
     noise = rng.normal(
@@ -419,86 +743,39 @@ def blend_images(seeds, imgs, *, noise_scale=5, fraction_swapped=0.0):
     return imgs_perturbed
 
 
-def make_intervals(rng, num_batches, num_lengths, num_replicates):
-    lengths = np.unique(
-            np.geomspace(1, num_batches, num_lengths).astype(int)
+def _make_perturbed_atom_sample(sample, *, perturb_atoms, img_params):
+    x = make_unsupervised_sample(sample)
+    atoms_a = transform_atom_coords(x['atoms_i'], x['frame_ia'])
+    perturbed_atoms_a = smartcall.call(
+            perturb_atoms,
+            KwOnly('sample', sample),
+            KwOnly('rng', sample.rng),
+            KwOnly('atoms', atoms_a),
+            KwOnly('img_params', img_params),
     )
-    intervals_by_length = {}
-    for length in lengths:
-        num_possible = num_batches // length
-        if num_possible < num_replicates:
-            continue
-        selected = rng.choice(num_possible, size=num_replicates, replace=False)
-        intervals_by_length[length] = sorted(
-                Interval(start=idx * length, end=(idx + 1) * length)
-                for idx in selected
-        )
-    return intervals_by_length
+    img, _ = image_from_atoms(perturbed_atoms_a, img_params)
+    return img
 
+def _make_perturbed_voxel_sample(sample, *, perturb_voxels, img_params):
+    x = make_unsupervised_image_sample(sample, img_params=img_params)
+    return smartcall.call(
+            perturb_voxels,
+            KwOnly('sample', sample),
+            KwOnly('rng', sample.rng),
+            KwOnly('img', x['image']),
+            KwOnly('img_params', img_params),
+    )
 
-def record_metrics(
-        perturbations,
-        intervals,
-        metric_factories,
-        *,
-        save_images=False,
-        img_dir=Path('images'),
-):
-    rows = []
-
-    for perturbation in tqdm(perturbations, desc='all perturbations'):
-        replicate_counter = defaultdict(int)
-        active = []
-        first_batch = True
-
-        for batch_idx, x in enumerate(
-                tqdm(perturbation.iter_image_batches(),
-                     desc=perturbation.algorithm_name,
-                     leave=False)
-        ):
-            if save_images and first_batch:
-                img_dir.mkdir(exist_ok=True)
-                filename = (
-                        f'{perturbation.algorithm_name}'
-                        f'_{perturbation.parameter_name}'
-                        f'_{perturbation.parameter_value:.4g}.npz'
-                )
-                mmvox.write_npz(
-                        img_dir / filename,
-                        np.asarray(x),
-                        perturbation.img_params.grid,
-                )
-                first_batch = False
-
-            for length, ivs in intervals.items():
-                r = replicate_counter[length]
-                if r < len(ivs) and ivs[r].start == batch_idx:
-                    for factory in metric_factories:
-                        active.append(MetricInterval(ivs[r], r, factory()))
-                    replicate_counter[length] += 1
-
-            for mi in active:
-                mi.metric.update(x)
-
-            still_active = []
-            for mi in active:
-                if batch_idx + 1 == mi.interval.end:
-                    rows.append(dict(
-                            algorithm_name=perturbation.algorithm_name,
-                            parameter_name=perturbation.parameter_name,
-                            parameter_value=perturbation.parameter_value,
-                            metric_name=_get_metric_name(mi.metric),
-                            metric_value=mi.metric.compute().item(),
-                            n=(mi.interval.end - mi.interval.start)
-                              * perturbation.batch_size,
-                            replicate=mi.replicate,
-                    ))
-                else:
-                    still_active.append(mi)
-            active = still_active
-
-    return pl.DataFrame(rows)
-
+def _make_unperturbed_sample(sample, *, img_params):
+    x = make_unsupervised_image_sample(sample, img_params=img_params)
+    return {
+            'seed': sample.i,
+            'image': x['image'],
+    }
+def _get_metric_name(metric):
+    if hasattr(metric, 'name'):
+        return metric.name
+    return repr(metric)
 
 def _make_norm(values):
     vals = np.sort(values)
@@ -510,283 +787,5 @@ def _make_norm(values):
     return Normalize(vmin=vals[0], vmax=vals[-1])
 
 
-def plot_metrics(df, *, perturbation_titles=None, metric_titles=None):
-    algorithms = df['algorithm_name'].unique().sort().to_list()
-    metrics = df['metric_name'].unique().sort().to_list()
-
-    n_rows = len(metrics)
-    n_cols = len(algorithms)
-    cmap = 'rainbow'
-
-    fig, axes = plt.subplots(
-            figsize=(3 * n_cols, 5 * n_rows),
-            nrows=n_rows,
-            ncols=n_cols,
-            sharex='all',
-            sharey='row',
-            layout='constrained',
-            squeeze=False,
-    )
-
-    for col, algorithm in enumerate(algorithms):
-        alg_df = df.filter(pl.col('algorithm_name') == algorithm)
-        param_name = alg_df['parameter_name'][0]
-        ticks = alg_df['parameter_value'].unique().sort()
-        norm = _make_norm(ticks.to_numpy())
-
-        alg_title = (perturbation_titles or {}).get(algorithm, algorithm)
-        is_log = isinstance(norm, LogNorm)
-        fig.colorbar(
-                ScalarMappable(norm=norm, cmap=cmap),
-                ax=list(axes[:, col]),
-                label=f'{alg_title}\n({param_name})',
-                ticks=ticks if not is_log else None,
-                format=LogFormatterMathtext() if is_log else None,
-                location='top',
-        )
-
-        for row, metric in enumerate(metrics):
-            metric_df = alg_df.filter(pl.col('metric_name') == metric)
-            metric_title = (metric_titles or {}).get(metric, metric)
-            ax = axes[row, col]
-
-            sns.lineplot(
-                    metric_df,
-                    x='n',
-                    y='metric_value',
-                    hue='parameter_value',
-                    palette=cmap,
-                    hue_norm=norm,
-                    errorbar=('ci', 95),
-                    ax=ax,
-                    legend=False,
-            )
-            ax.set_xscale('log')
-            ax.set_xlabel('# samples')
-            ax.set_ylabel(metric_title if col == 0 else '')
 
 
-def make_standard_perturbations(
-        db_path,
-        img_params,
-        *,
-        batch_size=16,
-):
-    perturbations = []
-
-    perturbations += [
-            PerturbAtoms(
-                perturb_atoms=jitter_atoms,
-                parameter_name='noise_A',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in np.linspace(0, 2, 11)
-    ]
-    perturbations += [
-            PerturbAtoms(
-                perturb_atoms=delete_random_atoms,
-                parameter_name='num_deletions',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in range(0, 20, 2)
-    ]
-    perturbations += [
-            PerturbAtoms(
-                perturb_atoms=insert_random_atoms,
-                parameter_name='num_insertions',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in range(0, 20, 2)
-    ]
-    perturbations += [
-            PerturbAtoms(
-                perturb_atoms=change_random_elements,
-                parameter_name='num_swaps',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in range(0, 20, 2)
-    ]
-    perturbations += [
-            PerturbVoxels(
-                perturb_voxels=add_noise_to_image,
-                parameter_name='noise_std',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in np.logspace(-2, 1, 10)
-    ]
-    perturbations += [
-            PerturbVoxels(
-                perturb_voxels=blur_image,
-                parameter_name='blur_std',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in np.logspace(-1, 1, 10)
-    ]
-    perturbations += [
-            PerturbVoxels(
-                perturb_voxels=mix_element_channels,
-                parameter_name='mix_fraction',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in np.linspace(0, 1, 11)
-    ]
-    perturbations += [
-            PerturbBatches(
-                perturb_batch=blend_images,
-                parameter_name='fraction_swapped',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            )
-            for x in np.linspace(0, 1, 11)
-    ]
-
-    return perturbations, min(p.num_batches for p in perturbations)
-
-
-def make_fast_debug_perturbations(
-        db_path,
-        img_params,
-        *,
-        batch_size=16,
-):
-    perturbations = [
-            TruncatedPerturbation(
-                PerturbVoxels(
-                    perturb_voxels=blur_image,
-                    parameter_name='blur_std',
-                    parameter_value=x,
-                    db_path=db_path,
-                    img_params=img_params,
-                    batch_size=batch_size,
-                ),
-                max_batches=100,
-            )
-            for x in [0.1, 10.0]
-    ]
-    return perturbations, min(p.num_batches for p in perturbations)
-
-
-def make_dry_run_perturbations(
-        db_path,
-        img_params,
-        *,
-        batch_size=16,
-):
-    def _trunc(p):
-        return TruncatedPerturbation(p, max_batches=500)
-
-    perturbations = []
-
-    perturbations += [
-            _trunc(PerturbAtoms(
-                perturb_atoms=jitter_atoms,
-                parameter_name='noise_A',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.linspace(0, 2, 3)
-    ]
-    perturbations += [
-            _trunc(PerturbAtoms(
-                perturb_atoms=delete_random_atoms,
-                parameter_name='num_deletions',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.linspace(0, 18, 3, dtype=int)
-    ]
-    perturbations += [
-            _trunc(PerturbAtoms(
-                perturb_atoms=insert_random_atoms,
-                parameter_name='num_insertions',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.linspace(0, 18, 3, dtype=int)
-    ]
-    perturbations += [
-            _trunc(PerturbAtoms(
-                perturb_atoms=change_random_elements,
-                parameter_name='num_swaps',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.linspace(0, 18, 3, dtype=int)
-    ]
-    perturbations += [
-            _trunc(PerturbVoxels(
-                perturb_voxels=add_noise_to_image,
-                parameter_name='noise_std',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.logspace(-2, 1, 3)
-    ]
-    perturbations += [
-            _trunc(PerturbVoxels(
-                perturb_voxels=blur_image,
-                parameter_name='blur_std',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.logspace(-1, 1, 3)
-    ]
-    perturbations += [
-            _trunc(PerturbVoxels(
-                perturb_voxels=mix_element_channels,
-                parameter_name='mix_fraction',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.linspace(0, 1, 3)
-    ]
-    perturbations += [
-            _trunc(PerturbBatches(
-                perturb_batch=blend_images,
-                parameter_name='fraction_swapped',
-                parameter_value=x,
-                db_path=db_path,
-                img_params=img_params,
-                batch_size=batch_size,
-            ))
-            for x in np.linspace(0, 1, 3)
-    ]
-
-    return perturbations, min(p.num_batches for p in perturbations)

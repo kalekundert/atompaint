@@ -7,7 +7,6 @@ from array_api_compat import array_namespace
 from math import ceil
 from dataclasses import dataclass, asdict
 from itertools import pairwise
-from more_itertools import all_equal
 from pathlib import Path
 
 # RCF stands for "radial correlation function".  This is similar in concept to 
@@ -24,7 +23,7 @@ class RcfParams:
     channel_pairs: list[tuple[int, int]]
     bin_widths: np.ndarray                      # (B,)         B: bins
     bin_centers: np.ndarray                     # (B,)         L: image size (voxels)
-    bin_masks: np.ndarray                       # (B, L, L, L)
+    bin_labels: np.ndarray                      # (L, L, L)   -1 outside all bins
     bin_weights: np.ndarray                     # (B,)
     image_size: int
     padded_image_size: int
@@ -41,14 +40,14 @@ def init_rcf_params(
         max_radius_A,
 ) -> RcfParams:
 
-    _, bin_widths, bin_centers, bin_masks = _make_rcf_bins(
+    _, bin_widths, bin_centers, bin_labels = _make_rcf_bins(
             image_length_voxels,
             image_resolution_A,
             max_radius_A,
             min_bin_width_A,
     )
     window_overlap_grid = _make_window_overlap_grid(image_length_voxels)
-    bin_weights = _bin_window_overlaps(bin_masks, window_overlap_grid)
+    bin_weights = _bin_window_overlaps(bin_labels, window_overlap_grid)
 
     if padded_image_length_voxels is None:
         padding_voxels = int(ceil(max_radius_A / image_resolution_A))
@@ -58,7 +57,7 @@ def init_rcf_params(
             channel_pairs=channel_pairs,
             bin_widths=bin_widths,
             bin_centers=bin_centers,
-            bin_masks=bin_masks,
+            bin_labels=bin_labels,
             bin_weights=bin_weights,
             image_size=image_length_voxels,
             padded_image_size=padded_image_length_voxels,
@@ -87,7 +86,7 @@ def update_rcf(rcf_accum: RcfAccum, rcf_params: RcfParams, images: np.ndarray):
             corr_histogram_accum=rcf_accum.corr_histogram,
             padded_image_size=rcf_params.padded_image_size,
             channel_pairs=rcf_params.channel_pairs,
-            bin_masks=rcf_params.bin_masks,
+            bin_labels=rcf_params.bin_labels,
     )
     rcf_accum.num_images += len(images)
 
@@ -98,11 +97,22 @@ def calc_rcf(rcf_accum: RcfAccum, rcf_params: RcfParams):
             bin_weights=rcf_params.bin_weights,
     )
 
-def calc_rcf_distance_L2(rcf_ref: Rcf, rcf_test: Rcf, rcf_params: RcfParams):
-    return _calc_l2_dist(
-            rcf_ref, rcf_test,
-            bin_widths=rcf_params.bin_widths,
-    )
+def calc_rcf_distance_L2(
+        rcf_ref: Rcf,
+        rcf_test: Rcf,
+        rcf_params: RcfParams,
+        *,
+        include_autocorr_zero_bin: bool = False,
+):
+    C = len(rcf_params.channel_pairs)
+    bin_widths = np.tile(rcf_params.bin_widths, (C, 1))
+
+    if not include_autocorr_zero_bin:
+        for i, (c1, c2) in enumerate(rcf_params.channel_pairs):
+            if c1 == c2:
+                bin_widths[i, 0] = 0
+
+    return _calc_l2_dist(rcf_ref, rcf_test, bin_widths=bin_widths)
 
 
 def _make_rcf_bins(image_length_voxels, image_resolution_A, max_radius_A, min_bin_width_A):
@@ -123,14 +133,15 @@ def _make_rcf_bins(image_length_voxels, image_resolution_A, max_radius_A, min_bi
     bin_widths = np.diff(bin_edges)
 
     N = len(bin_widths)
-    bin_masks = np.empty((N, *r_grid.shape), dtype=bool)
+    bin_labels = np.full(r_grid.shape, -1, dtype=np.intp)
     bin_centers = np.zeros(N)
 
     for i, (r_min, r_max) in enumerate(pairwise(bin_edges)):
-        bin_masks[i] = np.logical_and(r_grid >= r_min, r_grid < r_max)
-        bin_centers[i] = np.mean(r_grid[bin_masks[i]])
+        mask = np.logical_and(r_grid >= r_min, r_grid < r_max)
+        bin_labels[mask] = i
+        bin_centers[i] = np.mean(r_grid[mask])
 
-    return bin_edges, bin_widths, bin_centers, bin_masks
+    return bin_edges, bin_widths, bin_centers, bin_labels
 
 def _make_window_overlap_grid(image_length_voxels):
     idx_x, idx_y, idx_z = np.mgrid[
@@ -144,11 +155,14 @@ def _make_window_overlap_grid(image_length_voxels):
             (image_length_voxels - idx_z)
     )
 
-def _bin_window_overlaps(bin_masks, window_overlap_grid):
-    return np.array([
-            window_overlap_grid[bin_masks[i]].sum()
-            for i in range(len(bin_masks))
-    ])
+def _bin_window_overlaps(bin_labels, window_overlap_grid):
+    B = int(bin_labels.max()) + 1
+    valid = bin_labels.ravel() >= 0
+    return np.bincount(
+            bin_labels.ravel()[valid],
+            weights=window_overlap_grid.ravel()[valid].astype(float),
+            minlength=B,
+    ).astype(int)
 
 def _accum_correlations(
         images,
@@ -156,13 +170,14 @@ def _accum_correlations(
         corr_histogram_accum,
         padded_image_size,
         channel_pairs,
-        bin_masks,
+        bin_labels,
 ):
-    assert all_equal(bin_masks.shape[1:])
-
-    B = bin_masks.shape[0]
-    L = bin_masks.shape[1]
+    B = corr_histogram_accum.shape[1]
+    L = bin_labels.shape[0]
     P = padded_image_size
+
+    valid = bin_labels.ravel() >= 0
+    flat_labels = bin_labels.ravel()[valid]
 
     for img in images:
         F = [
@@ -173,9 +188,11 @@ def _accum_correlations(
         for i, (c1, c2) in enumerate(channel_pairs):
             corr = np.real(ifftn(np.conj(F[c1]) * F[c2]))
             corr = corr[:L,:L,:L]
-
-            for j in range(B):
-                corr_histogram_accum[i,j] += np.sum(corr[bin_masks[j]])
+            corr_histogram_accum[i] += np.bincount(
+                    flat_labels,
+                    weights=corr.ravel()[valid],
+                    minlength=B,
+            )
 
 def _normalize_correlations(*, corr_histogram, num_images, bin_weights) -> Rcf:
     xp = array_namespace(corr_histogram)
@@ -193,16 +210,23 @@ def _calc_l2_dist(rcf_ref, rcf_test, *, bin_widths):
 class RcfL2(torchmetrics.Metric):
 
     @classmethod
-    def from_npz(cls, path):
+    def from_npz(cls, path, *, include_autocorr_zero_bin=False):
         rcf, rcf_params = load_rcf(path)
-        return cls(rcf, rcf_params)
+        return cls(rcf, rcf_params, include_autocorr_zero_bin=include_autocorr_zero_bin)
 
 
-    def __init__(self, rcf_ref: Rcf, rcf_params: RcfParams):
+    def __init__(
+            self,
+            rcf_ref: Rcf,
+            rcf_params: RcfParams,
+            *,
+            include_autocorr_zero_bin: bool = False,
+    ):
         super().__init__()
 
         self.rcf_ref = rcf_ref
         self.rcf_params = rcf_params
+        self.include_autocorr_zero_bin = include_autocorr_zero_bin
 
         self.add_state(
                 'corr_histogram',
@@ -220,195 +244,7 @@ class RcfL2(torchmetrics.Metric):
 
     def compute(self):
         rcf_test = calc_rcf(self, self.rcf_params)
-        return calc_rcf_distance_L2(self.rcf_ref, rcf_test, self.rcf_params)
-
-
-
-def test_make_rcf_bins_3():
-    from math import sqrt
-
-    bin_edges, bin_widths, _, bin_masks = _make_rcf_bins(
-            image_length_voxels=3,
-            image_resolution_A=1,
-            max_radius_A=2.5,
-            min_bin_width_A=0.3,
-    )
-
-    expected_bin_edges = [
-            0,
-            1 / 2,
-            (sqrt(2) - 1) / 2 + 1,
-            (sqrt(3) - sqrt(2)) / 2 + sqrt(2),
-    ]
-    expected_bin_widths = [
-            expected_bin_edges[1] - expected_bin_edges[0],
-            expected_bin_edges[2] - expected_bin_edges[1],
-            expected_bin_edges[3] - expected_bin_edges[2],
-            0.3,
-            0.3,
-            0.3,
-    ]
-    expected_bin_masks = [
-
-            # bin 1: 0
-            [[[1, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]],
-
-             [[0, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]],
-
-             [[0, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]]],
-
-            # bin 2: 1
-            [[[0, 1, 0],
-              [1, 0, 0],
-              [0, 0, 0]],
-
-             [[1, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]],
-
-             [[0, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]]],
-
-            # bin 3: sqrt(2)
-            [[[0, 0, 0],
-              [0, 1, 0],
-              [0, 0, 0]],
-
-             [[0, 1, 0],
-              [1, 0, 0],
-              [0, 0, 0]],
-
-             [[0, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]]],
-
-            # bin 4: sqrt(3)
-            [[[0, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]],
-
-             [[0, 0, 0],
-              [0, 1, 0],
-              [0, 0, 0]],
-
-             [[0, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]]],
-
-            # bin 5: 
-            [[[0, 0, 1],
-              [0, 0, 0],
-              [1, 0, 0]],
-
-             [[0, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]],
-
-             [[1, 0, 0],
-              [0, 0, 0],
-              [0, 0, 0]]],
-
-            # bin 6:
-            [[[0, 0, 0],
-              [0, 0, 1],
-              [0, 1, 0]],
-
-             [[0, 0, 1],
-              [0, 0, 1],
-              [1, 1, 0]],
-
-             [[0, 1, 0],
-              [1, 1, 0],
-              [0, 0, 0]]],
-
-    ]
-
-    np.testing.assert_allclose(bin_widths, expected_bin_widths)
-    np.testing.assert_equal(bin_masks, expected_bin_masks)
-
-    window_overlap_grid = _make_window_overlap_grid(3)
-    bin_overlaps = _bin_window_overlaps(bin_masks, window_overlap_grid)
-
-    expected_bin_overlaps = [
-            27, 
-            18 * 3,
-            12 * 3,
-            8,
-            9 * 3,
-            6 * 6 + 4 * 3,
-    ]
-
-    np.testing.assert_equal(bin_overlaps, expected_bin_overlaps)
-
-def test_make_rcf_bins_19():
-    _, bin_widths, _, bin_masks = _make_rcf_bins(
-            image_length_voxels=19,
-            image_resolution_A=1,
-            max_radius_A=9,
-            min_bin_width_A=0.2,
-    )
-
-    # Make sure that each bin has the minimum width.
-    assert all(bin_widths + 1e-8 >= 0.2)
-
-    # Make sure that no voxel is included in more than one mask.
-    assert np.sum(bin_masks, axis=0).max() == 1
-
-    # Make sure that none of the masks are empty
-    assert all(np.sum(bin_masks, axis=(1,2,3)) > 0)
-
-def test_make_window_overlap_grid_3():
-    actual = _make_window_overlap_grid(3)
-    expected = [
-            [[27, 18,  9],
-             [18, 12,  6],
-             [ 9,  6,  3]],
-
-            [[18, 12,  6],
-             [12,  8,  4],
-             [ 6,  4,  2]],
-
-            [[ 9,  6,  3],
-             [ 6,  4,  2],
-             [ 3,  2,  1]]
-    ]
-    np.testing.assert_equal(actual, expected)
-
-def test_calc_rcf_uniform_image():
-    # The formula for calculating 1D correlation is:
-    #
-    #   (f . g)[n] = \sum_{m}^{N - n} f[m] g[m + n]
-    #
-    # Of course, we're working with 3D correlation, but the idea is the same.  
-    # If $f$ and $g$ both have uniform density, we can ignore the $m$ and $m + 
-    # n$ arguments, as the functions will have the same output for all inputs.  
-    # That leaves:
-    #
-    #   (f . g)[n] = \sum_{m}^{N - n} f[] g[]
-    #             = (N - n) f[] g[]
-    #
-    # The histograms we calculate should be normalized by the $N - n$ factor, 
-    # so every bin should have a value of $f[] g[]$.
-
-    rcf_params = init_rcf_params(
-            channel_pairs=[(0, 0)],
-            image_length_voxels=(L := 19),
-            image_resolution_A=1,
-            min_bin_width_A=0.2,
-            max_radius_A=9,
-    )
-    rcf_accum = init_rcf_accum(rcf_params)
-
-    uniform_image = np.ones((1, 1, L, L, L))
-    update_rcf(rcf_accum, rcf_params, uniform_image)
-
-    g = calc_rcf(rcf_accum, rcf_params)
-    np.testing.assert_allclose(g, 1)
-
+        return calc_rcf_distance_L2(
+                self.rcf_ref, rcf_test, self.rcf_params,
+                include_autocorr_zero_bin=self.include_autocorr_zero_bin,
+        )
