@@ -2,6 +2,7 @@ import torch.nn as nn
 
 from atompaint.encoders.resnet import ResBlock
 from atompaint.utils import identity
+from functools import partial
 
 from typing import Optional, Callable
 
@@ -70,3 +71,55 @@ class AsymResBlock(ResBlock):
             activation_before_skip=activation_before_skip,
         )
 
+
+def asym_resblock(in_channels, out_channels, *, upsample=False, downsample=False):
+    """
+    A convenient factory function for instantiating ResBlocks that may or 
+    may not resize their input.
+    """
+    import torch.nn as nn
+    from atompaint.encoders.asym_resnet import AsymResBlock
+
+    if upsample and downsample:
+        raise ValueError("can't upsample and downsample")
+
+    elif downsample:
+        yield AsymResBlock(
+                in_channels,
+                out_channels,
+                in_stride=2,
+                in_activation=nn.ReLU(),
+                out_activation=nn.ReLU(),
+                skip_factory=partial(nn.Conv3d, kernel_size=3, padding=1, stride=2),
+        )
+
+    elif upsample:
+        yield ResBlock(
+                conv1=nn.ConvTranspose3d(
+                    in_channels, out_channels,
+                    kernel_size=3, stride=2, padding=1, bias=False,
+                ),
+                bn1=nn.BatchNorm3d(out_channels),
+                act1=nn.ReLU(),
+                conv2=nn.Conv3d(
+                    out_channels, out_channels,
+                    kernel_size=3, stride=1, padding=1, bias=False,
+                ),
+                bn2=nn.BatchNorm3d(out_channels),
+                act2=nn.ReLU(),
+                resize=nn.Identity(),
+                resize_before_conv=False,
+                skip=nn.ConvTranspose3d(
+                    in_channels, out_channels,
+                    kernel_size=3, stride=2, padding=1,
+                ),
+                activation_before_skip=False,
+        )
+
+    else:
+        yield AsymResBlock(
+                in_channels,
+                out_channels,
+                in_activation=nn.ReLU(),
+                out_activation=nn.ReLU(),
+        )

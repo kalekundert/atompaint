@@ -43,6 +43,8 @@ center_A = (
         .to_numpy()
 )[0]
 
+print(f'center_A: {center_A}')
+
 grid = mmvox.Grid(
         center_A=center_A,
         length_voxels=21,

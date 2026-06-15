@@ -63,3 +63,29 @@ def flatten_base_space(geom_tensor):
             new_type,
     )
 
+def partial_ch(f, **kwargs):
+    """
+    Return a copy of the given function where (i) the given arguments 
+    have been pre-applied and (ii) the in/out channel arguments are specified 
+    positionally rather than as keywords.
+
+    The purpose of the in/out channel argument behavior is to smooth over a 
+    difficulty in using the `torchyield` layer factory functions.  These 
+    functions expect all of their arguments to be keywords, but the AtomPaint 
+    encoder classes specify input and output channels as positional arguments.  
+    As these layer factories are often wrapped in `partial()` anyways, this 
+    slightly bizarre version of partial provides a succinct if hacky solution 
+    to the problem.
+    """
+    from functools import wraps
+
+    @wraps(f)
+    def wrapper(in_channels, out_channels, **kwargs_wrapper):
+        return f(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                **kwargs_wrapper,
+                **kwargs,
+        )
+
+    return wrapper
