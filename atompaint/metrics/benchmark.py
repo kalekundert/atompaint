@@ -1,3 +1,6 @@
+import gc
+import torch
+import array_api_compat
 import macromol_voxelize as mmvox
 import polars as pl
 import numpy as np
@@ -243,6 +246,7 @@ def record_metrics(
         *,
         save_images=False,
         img_dir=Path('images'),
+        device=None,
 ):
     rows = []
 
@@ -270,38 +274,55 @@ def record_metrics(
                 )
                 first_batch = False
 
+            if device is not None:
+                x = x.to(device)
+
             for length, ivs in intervals.items():
                 r = replicate_counter[length]
                 if r < len(ivs) and ivs[r].start == batch_idx:
                     for factory in metric_factories:
-                        active.append(MetricInterval(ivs[r], r, factory()))
+                        metric = factory()
+                        if device is not None:
+                            metric = metric.to(device)
+                        active.append(MetricInterval(ivs[r], r, metric))
                     replicate_counter[length] += 1
 
             for mi in active:
                 mi.metric.update(x)
 
-            still_active = []
-            for mi in active:
-                if batch_idx + 1 == mi.interval.end:
+            completed = [mi for mi in active if batch_idx + 1 == mi.interval.end]
+            active    = [mi for mi in active if batch_idx + 1 != mi.interval.end]
+
+            if completed:
+                for mi in completed:
                     rows.append(dict(
-                            algorithm_name=perturbation.algorithm_name,
-                            parameter_name=perturbation.parameter_name,
-                            parameter_value=perturbation.parameter_value,
-                            metric_name=_get_metric_name(mi.metric),
-                            metric_value=mi.metric.compute().item(),
-                            n=(mi.interval.end - mi.interval.start)
-                              * perturbation.batch_size,
-                            replicate=mi.replicate,
+                        algorithm_name=perturbation.algorithm_name,
+                        parameter_name=perturbation.parameter_name,
+                        parameter_value=perturbation.parameter_value,
+                        metric_name=_get_metric_name(mi.metric),
+                        metric_value=float(mi.metric.compute()),
+                        n=(mi.interval.end - mi.interval.start) * perturbation.batch_size,
+                        replicate=mi.replicate,
                     ))
-                else:
-                    still_active.append(mi)
-            active = still_active
+                # `Metric` instances are self-referential: their `__init__`
+                # stores closures over `self` (the wrapped update/compute
+                # methods) as instance attributes.  This means they can only be
+                # reclaimed by the cyclic garbage collector, never by reference
+                # counting alone.
+                del completed, mi
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     return pl.DataFrame(rows)
 
-def plot_metrics(df, *, perturbation_titles=None, metric_titles=None):
+def plot_metrics(df, *, perturbation_titles=None, metric_titles=None, ylims=None, metric_order=None):
     algorithms = df['algorithm_name'].unique().sort().to_list()
-    metrics = df['metric_name'].unique().sort().to_list()
+    if metric_order is not None:
+        present = set(df['metric_name'].unique().to_list())
+        metrics = [m for m in metric_order if m in present]
+    else:
+        metrics = df['metric_name'].unique().sort().to_list()
 
     n_rows = len(metrics)
     n_cols = len(algorithms)
@@ -353,6 +374,8 @@ def plot_metrics(df, *, perturbation_titles=None, metric_titles=None):
             ax.set_xscale('log')
             ax.set_xlabel('# samples')
             ax.set_ylabel(metric_title if col == 0 else '')
+            if ylims and metric in ylims:
+                ax.set_ylim(*ylims[metric])
 
 def make_standard_perturbations(
         db_path,
@@ -482,7 +505,7 @@ def make_dry_run_perturbations(
         batch_size=16,
 ):
     def _trunc(p):
-        return TruncatedPerturbation(p, max_batches=100)
+        return TruncatedPerturbation(p, max_batches=20)
 
     perturbations = []
 
@@ -688,7 +711,7 @@ def add_noise_to_image(rng, img, *, noise_std, dataset_std=1):
     noise = rng.normal(
             scale=noise_std,
             size=img.shape,
-    )
+    ).astype(img.dtype)
     var_dataset = dataset_std**2
     var_noise = noise_std**2
     scale_factor = sqrt(var_dataset / (var_dataset + var_noise))
@@ -706,11 +729,13 @@ def blur_image(rng, img, *, blur_std):
 
 def mix_element_channels(rng, img, *, mix_fraction):
     img_mean = np.mean(img, axis=0)
-    return (1 - mix_fraction) * img + (mix_fraction) * img_mean
+    return ((1 - mix_fraction) * img + mix_fraction * img_mean).astype(img.dtype)
 
 def blend_images(seeds, imgs, *, noise_scale=5, fraction_swapped=0.0):
     if fraction_swapped == 0:
         return imgs
+
+    xp = array_api_compat.array_namespace(imgs)
 
     B, C, W, H, D = imgs.shape
     assert B == len(seeds)
@@ -722,10 +747,11 @@ def blend_images(seeds, imgs, *, noise_scale=5, fraction_swapped=0.0):
     noise = np.zeros((B, W, H, D))
 
     for b in range(B):
-        opensimplex.seed(seeds[b])
+        opensimplex.seed(int(seeds[b]))
         noise[b] = opensimplex.noise3array(x, y, z)
 
-    imgs_perturbed = np.empty_like(imgs)
+    imgs_np = np.asarray(imgs)
+    imgs_perturbed = np.empty_like(imgs_np)
     voxels_swapped = int(fraction_swapped * W * H * D)
 
     for b in range(B):
@@ -733,14 +759,14 @@ def blend_images(seeds, imgs, *, noise_scale=5, fraction_swapped=0.0):
 
         mask = noise[b] > threshold
 
-        fill_imgs = np.concatenate([imgs[:b], imgs[b+1:]])
+        fill_imgs = np.concatenate([imgs_np[:b], imgs_np[b+1:]])
         fill_noise = np.concatenate([noise[:b], noise[b+1:]])
         fill_idx = np.argmax(fill_noise, axis=0)
         fill_img = np.choose(fill_idx, fill_imgs)
 
-        imgs_perturbed[b] = np.where(mask, fill_img, imgs[b])
+        imgs_perturbed[b] = np.where(mask, fill_img, imgs_np[b])
 
-    return imgs_perturbed
+    return xp.asarray(imgs_perturbed)
 
 
 def _make_perturbed_atom_sample(sample, *, perturb_atoms, img_params):

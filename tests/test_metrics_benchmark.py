@@ -77,6 +77,10 @@ class FakeTensor:
     def item(self):
         return self._value
 
+    def __float__(self):
+        return self._value
+
+
 
 
 def test_make_intervals_interval_lengths():
