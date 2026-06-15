@@ -213,7 +213,7 @@ def test_sample_targeted_crop():
 def test_load_expt_131_classifier_1qjg_n38():
     classifier = ap.load_expt_131_classifier()
 
-    img = np.load(IMAGE_DIR / '1qjg_n38.npz')['image']
+    img = np.load(IMAGE_DIR / '1qjg_n38_21A_CNOPS*.npz')['image']
     img = torch.from_numpy(img).unsqueeze(0).float()
 
     label_preds = classifier(img)[0]

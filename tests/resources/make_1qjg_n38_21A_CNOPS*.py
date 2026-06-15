@@ -96,5 +96,5 @@ crop_grid = mmvox.Grid(
         resolution_A=1.0,
 )
 
-mmvox.write_npz('1qjg_n38.npz', img, crop_grid)
+mmvox.write_npz('1qjg_n38_21A_CNOPS*.npz', img, crop_grid)
 
