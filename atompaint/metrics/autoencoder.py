@@ -98,7 +98,7 @@ def load_expt_157_ref_stats() -> FaedAccum:
             'expt_157/frechet_ref_stats'
             ';channels=48-96-192-8;scale=8;kl-weight=2e-3'
             ';image-size=19A;job-id=hparams_06;epoch=48'
-            ';dataset=expt_107;split=val.pt'
+            ';dataset=expt_107;split=train;normalize-std=1.pt'
         )
     )
 
