@@ -9,7 +9,7 @@ from torchmetrics.classification import MulticlassAccuracy
 from macromol_dataframe import Coords
 from dataclasses import dataclass
 from atompaint.metrics.frechet_dist import (
-    _calc_fid,
+    _calc_frechet_dist2,
     _calc_cov,
     _calc_batch_stats,
     _merge_batch_stats_in_place,
@@ -159,7 +159,7 @@ class FrechetNeighborLocDistance(Metric):
         cov = _calc_cov(self.ncov, self.n)
         ref_cov = _calc_cov(self.ref_ncov, self.ref_n)
 
-        return _calc_fid(self.mean, cov, self.ref_mean, ref_cov)
+        return _calc_frechet_dist2(self.mean, cov, self.ref_mean, ref_cov)
 
     def load_reference_stats(self, ref_path):
         ref_stats = torch.load(

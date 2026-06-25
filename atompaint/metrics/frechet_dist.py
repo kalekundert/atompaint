@@ -3,7 +3,7 @@ import torch
 from torch import Tensor
 
 
-def _calc_fid(mean, cov, ref_mean, ref_cov):
+def _calc_frechet_dist2(mean, cov, ref_mean, ref_cov):
     r"""
     Compute the Fréchet distance between the two given multivariate Gaussian
     distributions.

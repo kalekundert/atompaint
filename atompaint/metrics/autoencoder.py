@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 from pathlib import Path
 
 from atompaint.metrics.frechet_dist import (
-    _calc_fid,
+    _calc_frechet_dist2,
     _calc_cov,
     _calc_batch_stats,
     _merge_batch_stats_in_place,
@@ -88,7 +88,7 @@ def calc_faed_distance(stats_ref: FaedStats, stats_test: FaedStats) -> float:
     # Returns d² (squared Fréchet distance), following FID convention.
     cov_ref = _calc_cov(stats_ref.ncov, stats_ref.n)
     cov_test = _calc_cov(stats_test.ncov, stats_test.n)
-    return _calc_fid(stats_test.mean, cov_test, stats_ref.mean, cov_ref)
+    return _calc_frechet_dist2(stats_test.mean, cov_test, stats_ref.mean, cov_ref)
 
 def save_faed_accum(path: Path, accum: FaedAccum):
     torch.save(dict(
