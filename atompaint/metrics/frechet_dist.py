@@ -58,6 +58,98 @@ def _calc_frechet_dist2(mean, cov, ref_mean, ref_cov):
 
     return d.item()
 
+def _extrapolate_frechet_dist2_inf_samples(*, rng, feats, ref_mean, ref_cov, sample_sizes, num_replicates):
+    r"""
+    Estimate the Fréchet distance for an infinite number of samples, by
+    extrapolation.
+
+    The finite-sample Fréchet distance is a biased estimator: its expected
+    value decreases roughly linearly in $1/N$ as the number of test samples $N$
+    grows, because the sample covariance only converges to the true covariance
+    in the large-$N$ limit.  Following [Chong2020], we estimate the unbiased
+    value by computing the distance at several sample sizes, fitting a line of
+    distance vs. $1/N$, and reading off the intercept ($1/N = 0$).
+
+    This linear relationship only holds when each sample covariance is full
+    rank, i.e. $N >$ the feature dimension.  Sample sizes that are not full rank
+    will not fall on the line, so they are rejected with a `ValueError`.
+
+    Args:
+        rng:
+            A `numpy.random.Generator` used to choose the random subsets.
+
+        feats:
+            A tensor of shape [M, d] containing the M test feature vectors to
+            subsample from.
+
+        ref_mean:
+            The mean of the reference features, shape [d].
+
+        ref_cov:
+            The covariance of the reference features, shape [d, d].  The
+            reference distribution is treated as fixed; only the test set is
+            subsampled and extrapolated.
+
+        sample_sizes:
+            The sample sizes N at which to evaluate the Fréchet distance.  Each
+            must satisfy ``N > d`` (full rank) and ``N <= M``.
+
+        num_replicates:
+            How many independent random subsets to draw at each sample size.
+            More replicates reduce the variance of the line fit.
+
+    [Chong2020]: https://doi.org/10.1109/CVPR42600.2020.00611
+    """
+    M, d = feats.shape
+
+    # Don't allow sample sizes smaller than the dimensionality of the feature 
+    # vector.  When there aren't enough samples, the covariance matrix is 
+    # effectively projected onto a lower dimensional space, resulting in 
+    # inaccurate distances.
+    bad = [n for n in sample_sizes if n <= d]
+    if bad:
+        raise ValueError(
+            f"every sample size must exceed the feature dimension ({d}) so the "
+            f"covariance is full rank; got non-full-rank sample sizes: {bad}"
+        )
+
+    inv_n = []
+    frechet_dist2s = []
+
+    for n in sample_sizes:
+        for _ in range(num_replicates):
+            idx = torch.from_numpy(
+                    rng.choice(M, size=n, replace=False),
+            ).to(feats.device)
+            mean, ncov, _ = _calc_batch_stats(feats[idx])
+            cov = _calc_cov(ncov, n)
+            frechet_dist2 = _calc_frechet_dist2(mean, cov, ref_mean, ref_cov)
+
+            inv_n.append(1.0 / n)
+            frechet_dist2s.append(frechet_dist2)
+
+    inv_n = torch.tensor(inv_n, dtype=torch.float64)
+    frechet_dist2s = torch.tensor(frechet_dist2s, dtype=torch.float64)
+
+    # `_calc_frechet_dist2()` returns NaN for degenerate (non-finite)
+    # covariances, e.g. from badly out-of-distribution images.  Drop those
+    # points rather than poisoning the whole fit; if too few remain, the result
+    # is NaN.
+    finite = torch.isfinite(frechet_dist2s)
+    if finite.sum() < 2:
+        return float('nan')
+
+    inv_n = inv_n[finite]
+    frechet_dist2s = frechet_dist2s[finite]
+
+    # Least-squares fit of `frechet_dist2 = slope * (1/N) + intercept`; return
+    # the intercept.
+    A = torch.stack([inv_n, torch.ones_like(inv_n)], dim=1)
+    solution = torch.linalg.lstsq(A, frechet_dist2s.unsqueeze(1)).solution
+    intercept = solution[1, 0]
+
+    return intercept.item()
+
 def _calc_cov(ncov, n):
     assert n >= 2
     return ncov / (n - 1)
