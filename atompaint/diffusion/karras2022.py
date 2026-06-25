@@ -270,21 +270,20 @@ class KarrasPrecond(nn.Module):
 
 @dataclass(kw_only=True)
 class GenerateParams:
-    # See Experiment #120 for details on how these parameters were chosen.
-    noise_steps: int = 98
+    noise_steps: int = 18
     resample_steps: int = 1
 
-    sigma_min: float = 0.0278876278887711
-    sigma_max: float = 65.7645071048362
-    rho: float = 7.53983816992786
+    sigma_min: float = 0.002
+    sigma_max: float = 80
+    rho: float = 7
 
-    S_churn: float = 12.3927241214305
+    S_churn: float = 0
     S_min: float = 0
     S_max: float = float('inf')
 
-    # The mean and standard deviation of the underlying dataset, if the model 
-    # was trained on data where these parameters were normalized.  More 
-    # prescriptively, these values should match the values of `normalize_mean` 
+    # The mean and standard deviation of the underlying dataset, if the model
+    # was trained on data where these parameters were normalized.  More
+    # prescriptively, these values should match the values of `normalize_mean`
     # and `normalize_std` that were passed to `MacromolImageDiffusionData`.
     unnormalize_mean: float = 0
     unnormalize_std: float = 1
@@ -292,10 +291,11 @@ class GenerateParams:
     clamp_low: float = 0
     clamp_high: float = 1
 
-    # Cap the number of images that can be fed to the model at once.  This is 
-    # meant to help prevent the image-generation process from exceeding the 
+    # Cap the number of images that can be fed to the model at once.  This is
+    # meant to help prevent the image-generation process from exceeding the
     # available VRAM.  If `None`, no cap is set.
     max_batch_size: Optional[int] = None
+
 
 @dataclass(kw_only=True)
 class InpaintParams(GenerateParams):
@@ -484,6 +484,16 @@ def inpaint(
     else:
         return x_inpaint
 
+
+def load_expt_120_generate_params():
+    """Return the GenerateParams tuned in Experiment 120 for image-space diffusion."""
+    return GenerateParams(
+        noise_steps=98,
+        sigma_min=0.0278876278887711,
+        sigma_max=65.7645071048362,
+        rho=7.53983816992786,
+        S_churn=12.3927241214305,
+    )
 
 def load_expt_102_unet(*, lr=5, epoch=99, mode='eval'):
     from atompaint.checkpoints import load_model_weights, strip_prefix
