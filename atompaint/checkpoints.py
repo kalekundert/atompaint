@@ -2,10 +2,35 @@ import torch
 import os
 
 from atompaint.utils import identity
+from lightning.pytorch.callbacks import ModelCheckpoint
 from torch import Tensor
 from xxhash import xxh32_hexdigest
 from pathlib import Path
 from typing import Optional, Literal, Callable
+
+
+class WarmupAwareModelCheckpoint(ModelCheckpoint):
+    """
+    A `ModelCheckpoint` that suppresses top-k checkpoint selection during an
+    initial warmup period.
+
+    When training with a regularization warmup schedule (e.g. a KL warmup in a
+    VAE), the lowest validation loss is often reached *during* the warmup,
+    while the regularization weight is still near zero.  Such a checkpoint
+    minimizes a different (and easier) objective than the fully-weighted loss,
+    so it is not representative of the final model.  This subclass skips top-k
+    saving until `current_epoch >= warmup_epochs`.
+    """
+
+    def __init__(self, warmup_epochs: int, **kwargs):
+        super().__init__(**kwargs)
+        self._warmup_epochs = warmup_epochs
+
+    def _save_topk_checkpoint(self, trainer, monitor_candidates):
+        if trainer.current_epoch < self._warmup_epochs:
+            return
+        super()._save_topk_checkpoint(trainer, monitor_candidates)
+
 
 class EvalModeCheckpointMixin:
     """

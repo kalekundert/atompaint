@@ -1,9 +1,11 @@
 import lightning as L
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from atompaint.type_hints import OptFactory
+from functools import partial
 from macromol_gym_unsupervised import MakeSampleArgs
 
 class Autoencoder(nn.Module):
@@ -30,9 +32,9 @@ class VariationalAutoencoder(L.LightningModule):
             opt_factory: OptFactory,
             std_fn=None,
             scale_factor: float = 1.0,
-            kl_weight: float = 1.0,
+            kl_weight_schedule=None,
             free_bits_per_dim: float = 0.0,
-    
+
     ):
         """
         Arguments:
@@ -71,9 +73,20 @@ class VariationalAutoencoder(L.LightningModule):
                 by putting the input into a range where the loss landscape is
                 easier to optimize.
 
-            kl_weight:
-                Weight applied to the KL-divergence term of the loss.
-                Equivalent to the β parameter in β-VAE.
+            kl_weight_schedule:
+                A function that maps the current epoch number to the weight
+                applied to the KL-divergence term of the loss (the β parameter
+                in β-VAE).  Defaults to a constant weight of 1.0.  Use one of
+                the provided schedules (`constant_kl_weight`,
+                `geometric_kl_warmup`), supplying their parameters via
+                `functools.partial`, e.g.::
+
+                    partial(geometric_kl_warmup, weight=1e-5, warmup_epochs=20)
+
+                Annealing the weight up from near-zero over the first several
+                epochs lets the encoder learn an informative latent before the
+                full KL penalty is applied, which helps avoid posterior
+                collapse.
 
             free_bits_per_dim:
                 Minimum KL contribution allowed per latent dimension.
@@ -87,7 +100,10 @@ class VariationalAutoencoder(L.LightningModule):
         self.optimizer = opt_factory(self.parameters())
         self.std_fn = std_fn if std_fn is not None else std_from_log_var
         self.scale_factor = scale_factor
-        self.kl_weight = kl_weight
+        self.kl_weight_schedule = (
+                kl_weight_schedule if kl_weight_schedule is not None
+                else partial(constant_kl_weight, weight=1.0)
+        )
         self.free_bits_per_dim = free_bits_per_dim
 
     def configure_optimizers(self):
@@ -120,8 +136,9 @@ class VariationalAutoencoder(L.LightningModule):
         img_pred_scaled = self.decoder(latent)
         img_pred = img_pred_scaled / self.scale_factor
 
+        kl_weight = self.kl_weight_schedule(self.current_epoch)
         recon_loss = F.mse_loss(img_scaled, img_pred_scaled)
-        prior_loss = self.kl_weight * kl_divergence_vs_std_normal(
+        prior_loss = kl_weight * kl_divergence_vs_std_normal(
                 mean, std,
                 free_bits_per_dim=self.free_bits_per_dim,
         )
@@ -130,7 +147,7 @@ class VariationalAutoencoder(L.LightningModule):
         self.log(f'{step}/loss',        loss)
         self.log(f'{step}/loss/recon',  recon_loss)
         self.log(f'{step}/loss/prior',  prior_loss)
-        self.log(f'{step}/kl_weight',   self.kl_weight)
+        self.log(f'{step}/kl_weight',   kl_weight)
         self.log(f'{step}/recon_mse',   F.mse_loss(img, img_pred))
         return loss
 
@@ -149,6 +166,29 @@ def std_from_log_var(x, *, min_std=1e-5):
 
 def std_from_softplus(x, *, min_std=1e-5):
     return F.softplus(x) + min_std
+
+
+def constant_kl_weight(epoch, *, weight):
+    """
+    A KL-weight schedule that returns the same `weight` for every epoch.
+    """
+    return weight
+
+def geometric_kl_warmup(epoch, *, weight, warmup_epochs, start=1e-8):
+    """
+    A KL-weight schedule that ramps geometrically up to `weight`.
+
+    The weight increases from `start` to `weight` over the first
+    `warmup_epochs` epochs, linearly in log-space, then stays constant at
+    `weight`.  Both `weight` and `start` must be positive.  A `warmup_epochs`
+    of zero returns `weight` from the first epoch.
+    """
+    if warmup_epochs == 0:
+        return weight
+
+    t = min(1.0, epoch / warmup_epochs)
+    log_weight = math.log(start) + t * (math.log(weight) - math.log(start))
+    return math.exp(log_weight)
 
 
 def make_vae_image_tensors(sample: MakeSampleArgs, *, img_params):
