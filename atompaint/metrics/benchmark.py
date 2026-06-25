@@ -438,7 +438,7 @@ def make_standard_perturbations(
                 img_params=img_params,
                 batch_size=batch_size,
             )
-            for x in np.logspace(-2, 1, 10)
+            for x in np.logspace(-3, 0, 10)
     ]
     perturbations += [
             PerturbVoxels(
@@ -562,7 +562,7 @@ def make_dry_run_perturbations(
                 img_params=img_params,
                 batch_size=batch_size,
             ))
-            for x in np.logspace(-2, 1, 3)
+            for x in np.logspace(-3, 0, 3)
     ]
     perturbations += [
             _trunc(PerturbVoxels(
@@ -600,9 +600,9 @@ def make_dry_run_perturbations(
 
     return perturbations, min(p.num_batches for p in perturbations)
 
-def make_intervals(rng, num_batches, num_lengths, num_replicates):
+def make_intervals(rng, num_batches, num_lengths, num_replicates, *, min_batches=1):
     lengths = np.unique(
-            np.geomspace(1, num_batches, num_lengths).astype(int)
+            np.geomspace(min_batches, num_batches, num_lengths).astype(int)
     )
     intervals_by_length = {}
     for length in lengths:
