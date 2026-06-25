@@ -5,10 +5,29 @@ from functools import partial
 from torch import Tensor
 from einops import rearrange
 
+
 class AsymMeanStd(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return rearrange(x, 'b (m c) ... -> b m c ...', m=2)
+
+
+class AsymMeanOnly(nn.Module):
+    """
+    Wrap an AsymMeanStd encoder to return flattened latent means.
+
+    The encoder tail (via AsymMeanStd) outputs (B, 2, C, ...) where index 0
+    is means and index 1 is log-stds.  This wrapper extracts the means and
+    flattens the spatial dimensions to produce a (B, C*...) feature vector.
+    """
+
+    def __init__(self, encoder: nn.Module):
+        super().__init__()
+        self.encoder = encoder
+
+    def forward(self, images: Tensor) -> Tensor:
+        enc_out = self.encoder(images)  # (B, 2, C, ...)
+        return enc_out[:, 0].flatten(1)  # (B, C, ...)
 
 
 def conv_split_mean_std(in_channels, out_channels, **kwargs):

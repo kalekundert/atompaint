@@ -6,6 +6,7 @@ from torch import Tensor, int64
 from typing import Protocol, runtime_checkable
 from pathlib import Path
 
+from atompaint.autoencoders.asym_vae import AsymMeanOnly
 from atompaint.metrics.frechet_dist import (
     _calc_frechet_dist2,
     _calc_cov,
@@ -39,24 +40,6 @@ class FaedAccum(nn.Module):
         self.register_buffer('ncov',     ncov)
         self.register_buffer('ncov_err', ncov_err)
         self.register_buffer('n',        n)
-
-
-class LatentMeans(nn.Module):
-    """
-    Wrap a VAE encoder to return flattened latent means.
-
-    The VAE encoder returns (B, 2, C, h, w, d) — index 0 is means, index 1
-    is log-stds.  This wrapper extracts the means and flattens the spatial
-    dimensions to produce a (B, C*h*w*d) feature vector.
-    """
-
-    def __init__(self, encoder: nn.Module):
-        super().__init__()
-        self.encoder = encoder
-
-    def forward(self, images: Tensor) -> Tensor:
-        enc_out = self.encoder(images)  # (B, 2, C, h, w, d)
-        return enc_out[:, 0].flatten(1)  # (B, d)
 
 
 def init_faed_accum(latent_dim: int, *, device=None) -> FaedAccum:
@@ -152,7 +135,7 @@ class Faed(torchmetrics.Metric):
     def __init__(self, encoder: nn.Module = None, stats_ref: FaedAccum = None):
         if encoder is None and stats_ref is None:
             from atompaint.autoencoders.asym_vae import load_expt_157_vae
-            encoder = LatentMeans(load_expt_157_vae().encoder).eval()
+            encoder = AsymMeanOnly(load_expt_157_vae().encoder).eval()
             stats_ref = load_expt_157_ref_stats()
 
         super().__init__()
