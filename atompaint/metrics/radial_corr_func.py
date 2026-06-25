@@ -9,6 +9,8 @@ from dataclasses import dataclass, asdict
 from itertools import pairwise
 from pathlib import Path
 
+from typing import Optional
+
 # RCF stands for "radial correlation function".  This is similar in concept to 
 # the radial distribution function (RDF), except that it is a histogram over 
 # volume-normalized auto/cross-correlation rather than density.
@@ -76,6 +78,14 @@ def load_rcf(path: Path) -> tuple[Rcf, RcfParams]:
     kwargs = dict(np.load(path))
     rcf = kwargs.pop('rcf')
     return rcf, RcfParams(**kwargs)
+
+def load_rcf_expt_155():
+    from atompaint.checkpoints import get_artifact_dir
+    npz_path = (
+            get_artifact_dir()
+            / 'expt_155/rcf_ref;dataset=expt_107;split=train;normalize-std=1.npz'
+    )
+    return load_rcf(npz_path)
 
 def save_rcf(path: Path, rcf: Rcf, rcf_params: RcfParams):
     np.savez(path, rcf=rcf, **asdict(rcf_params))
@@ -218,15 +228,17 @@ class RcfL2(torchmetrics.Metric):
         rcf, rcf_params = load_rcf(path)
         return cls(rcf, rcf_params, include_autocorr_zero_bin=include_autocorr_zero_bin)
 
-
     def __init__(
             self,
-            rcf_ref: Rcf,
-            rcf_params: RcfParams,
+            rcf_ref: Optional[Rcf] = None,
+            rcf_params: Optional[RcfParams] = None,
             *,
             include_autocorr_zero_bin: bool = False,
     ):
         super().__init__()
+
+        if rcf_ref is None and rcf_params is None:
+            rcf_ref, rcf_params = load_rcf_expt_155()
 
         self.rcf_ref = rcf_ref
         self.rcf_params = rcf_params
