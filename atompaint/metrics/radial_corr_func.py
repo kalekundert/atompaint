@@ -3,7 +3,7 @@ import torchmetrics
 import numpy as np
 
 from scipy.fft import fftn, ifftn, next_fast_len
-from array_api_compat import array_namespace
+from array_api_compat import array_namespace, device as get_device
 from math import ceil
 from dataclasses import dataclass, asdict
 from itertools import pairwise
@@ -172,6 +172,8 @@ def _accum_correlations(
         channel_pairs,
         bin_labels,
 ):
+    xp = array_namespace(corr_histogram_accum)
+
     B = corr_histogram_accum.shape[1]
     L = bin_labels.shape[0]
     P = padded_image_size
@@ -188,20 +190,22 @@ def _accum_correlations(
         for i, (c1, c2) in enumerate(channel_pairs):
             corr = np.real(ifftn(np.conj(F[c1]) * F[c2]))
             corr = corr[:L,:L,:L]
-            corr_histogram_accum[i] += np.bincount(
+            corr_histogram_i = np.bincount(
                     flat_labels,
                     weights=corr.ravel()[valid],
                     minlength=B,
             )
+            corr_histogram_accum[i] += xp.asarray(corr_histogram_i, device=get_device(corr_histogram_accum))
 
 def _normalize_correlations(*, corr_histogram, num_images, bin_weights) -> Rcf:
     xp = array_namespace(corr_histogram)
-    return corr_histogram / num_images / xp.asarray(bin_weights)
+    return corr_histogram / num_images / xp.asarray(bin_weights, device=get_device(corr_histogram))
 
 def _calc_l2_dist(rcf_ref, rcf_test, *, bin_widths):
     xp = array_namespace(rcf_test)
-    rcf_ref = xp.asarray(rcf_ref)
-    bin_widths = xp.asarray(bin_widths)
+    d = get_device(rcf_test)
+    rcf_ref = xp.asarray(rcf_ref, device=d)
+    bin_widths = xp.asarray(bin_widths, device=d)
 
     l2_dists = xp.sqrt(xp.sum(bin_widths * (rcf_test - rcf_ref)**2))
     return xp.sum(l2_dists)
@@ -240,7 +244,7 @@ class RcfL2(torchmetrics.Metric):
         )
 
     def update(self, images):
-        update_rcf(self, self.rcf_params, images)
+        update_rcf(self, self.rcf_params, images.cpu())
 
     def compute(self):
         rcf_test = calc_rcf(self, self.rcf_params)
